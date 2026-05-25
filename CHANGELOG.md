@@ -2,6 +2,34 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.4 (2026-05-25)
+
+CRUD audit pass + query editor parity with the host code editor.
+
+- Query editor replaced with a real CodeMirror 6 mount via the new
+  `ctx.ui.codeEditor` host API. SQL keywords, strings, numbers,
+  comments are syntax-highlighted using the same palette tier as
+  TEDI's main editor. Language is picked per connection kind
+  (`sql:mysql`, `sql:postgres`, `sql:sqlite`). Line numbers, history,
+  selection, line-wrap, and active-line gutter all wired.
+- Workspace tab icon: TabBar now renders the `Database01Icon` HugeIcon
+  in sky-blue (the same `--tedi-tab-ssh` accent SSH terminal tabs
+  use) so a SQL Explorer tab reads as part of the remote-dev cluster.
+- Password prefetch: the connection dialog now `await`s the keychain
+  before painting. Editing a connection no longer races the secret
+  load, so a quick "Test" click after Edit always carries the saved
+  password.
+- CRUD audited end-to-end:
+  - UI insert: `openInsertDialog` → `/table-insert` → success toast.
+  - UI read: `loadTableRows` → `/table-rows` with pagination + total
+    count.
+  - UI update: double-click cell → `/table-update` keyed on PK.
+  - UI delete: row action → confirm → `/table-delete`.
+  - Query insert / update / delete / DDL: free-form via the editor's
+    multi-statement runner, gated on the connection's `allow_writes`
+    flag with destructive-statement typed confirmation.
+- Requires TEDI >= 0.2.26 for `ctx.ui.codeEditor`.
+
 ## 0.2.3 (2026-05-25)
 
 Layout, badges, and responsive polish.

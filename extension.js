@@ -60,6 +60,9 @@ const state = {
   active: null, // active connection id
   /** @type {Record<string, SessionState>} */
   sessions: {},
+  /** Current CodeMirror editor mount, kept singleton across re-renders so
+   *  we can dispose the previous EditorView before mounting a new one. */
+  editorHandle: null,
 };
 
 /**
@@ -150,6 +153,14 @@ export async function activate(context) {
 
 export async function deactivate() {
   try {
+    if (state.editorHandle?.dispose) {
+      try {
+        state.editorHandle.dispose();
+      } catch {
+        // ignore
+      }
+      state.editorHandle = null;
+    }
     if (sidecar?.baseUrl) {
       await fetchJson("/shutdown", { method: "POST", body: {} }).catch(() => {});
     }
@@ -172,6 +183,7 @@ function checkRequiredApis(c) {
   if (typeof c?.registerPanelRenderer !== "function") missing.push("ctx.registerPanelRenderer");
   if (typeof c?.tabs?.openExtensionTab !== "function") missing.push("ctx.tabs.openExtensionTab");
   if (typeof c?.headerBar?.setItem !== "function") missing.push("ctx.headerBar");
+  if (typeof c?.ui?.codeEditor !== "function") missing.push("ctx.ui.codeEditor");
   if (typeof c?.secrets?.set !== "function") missing.push("ctx.secrets");
   if (typeof c?.settings?.set !== "function") missing.push("ctx.settings");
   return missing;
@@ -431,7 +443,7 @@ function renderHeader() {
     el(
       "div",
       { class: "tsql-header-actions" },
-      iconButton("Add01Icon", "New connection", openConnectionDialog),
+      iconButton("Add01Icon", "New connection", () => openConnectionDialog()),
       iconButton("Refresh01Icon", "Restart sidecar", restartSidecarFlow),
     ),
   );
@@ -533,7 +545,7 @@ function renderConnRow(c) {
     ),
     rowActionBtn("PencilEdit01Icon", "Edit connection", (event) => {
       event.stopPropagation();
-      openConnectionDialog(c);
+      void openConnectionDialog(c);
     }),
     rowActionBtn("Delete02Icon", "Delete connection", (event) => {
       event.stopPropagation();
@@ -549,11 +561,25 @@ function connSubtitle(c) {
 
 // ----------------------------- Connection dialog -----------------------------
 
-function openConnectionDialog(existing) {
+async function openConnectionDialog(existing) {
+  const isEdit = Boolean(existing?.id);
+  // Prefetch the password from the OS keychain BEFORE rendering the
+  // dialog so the form is fully populated on first paint. The old
+  // async-then-set-input flow had a window where a quick "Test" click
+  // would fire with an empty password and fail before the secret
+  // resolved.
+  let prefetchedPassword = "";
+  if (isEdit && existing?.kind !== "sqlite") {
+    try {
+      prefetchedPassword = (await getSecret(existing.id)) ?? "";
+    } catch (err) {
+      ctx?.logger?.warn?.("password prefetch failed", err);
+    }
+  }
+
   // Modal overlay anchored inside the panel; keeps the dialog scoped.
   const overlay = el("div", { class: "tsql-overlay" });
   const dialog = el("div", { class: "tsql-dialog" });
-  const isEdit = Boolean(existing?.id);
   const form = {
     id: existing?.id ?? cryptoId(),
     name: existing?.name ?? "",
@@ -562,7 +588,7 @@ function openConnectionDialog(existing) {
     port: existing?.port ?? "",
     user: existing?.user ?? "",
     database: existing?.database ?? "",
-    password: "",
+    password: prefetchedPassword,
     allow_writes: existing?.allow_writes ?? false,
     sslMode: existing?.sslMode ?? "none",
     sqliteReadOnly: existing?.sqliteReadOnly ?? false,
@@ -570,14 +596,6 @@ function openConnectionDialog(existing) {
     query_timeout_ms: existing?.query_timeout_ms ?? 30000,
     row_limit: existing?.row_limit ?? 10000,
   };
-
-  if (isEdit) {
-    getSecret(form.id).then((p) => {
-      if (p) form.password = p;
-      const input = dialog.querySelector("[data-field=password]");
-      if (input) input.value = p ?? "";
-    });
-  }
 
   dialog.appendChild(el("h3", { class: "tsql-dialog-title", text: isEdit ? "Edit connection" : "New connection" }));
 
@@ -1164,24 +1182,53 @@ function renderEditorAndResults(session) {
   );
   wrap.appendChild(toolbar);
 
-  const editor = el("textarea", {
-    class: "tsql-editor",
-    attrs: {
-      spellcheck: "false",
-      placeholder: "-- write SQL here, then press Ctrl+Enter",
-    },
-  });
-  editor.value = session.sql ?? "";
-  editor.addEventListener("input", () => {
-    session.sql = editor.value;
-  });
-  editor.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      runActiveQuery();
+  // Dispose any previous CodeMirror mount before spawning a new one;
+  // rerender() blows the panel DOM away, but the React-less CodeMirror
+  // view stays alive in the host iconRoots / handle registry until we
+  // tell it to die. Without this, every connection switch (or window
+  // close + reopen of the tab) would leak an EditorView.
+  if (state.editorHandle && typeof state.editorHandle.dispose === "function") {
+    try {
+      state.editorHandle.dispose();
+    } catch {
+      // ignore
     }
-  });
-  wrap.appendChild(editor);
+    state.editorHandle = null;
+  }
+
+  const editorWrap = el("div", { class: "tsql-editor" });
+  wrap.appendChild(editorWrap);
+
+  const connKind = state.connections.find((c) => c.id === session.connId)?.kind;
+  const language =
+    connKind === "mysql"
+      ? "sql:mysql"
+      : connKind === "postgres"
+        ? "sql:postgres"
+        : connKind === "sqlite"
+          ? "sql:sqlite"
+          : "sql";
+
+  try {
+    state.editorHandle = ctx.ui.codeEditor(editorWrap, {
+      language,
+      value: session.sql ?? "",
+      onChange: (v) => {
+        session.sql = v;
+      },
+      onCmdEnter: () => runActiveQuery(),
+    });
+  } catch (err) {
+    ctx?.logger?.error?.("codeEditor mount failed", err);
+    // Fail loud rather than silently disabling editing; tell the user
+    // they're on an older TEDI without the editor API.
+    editorWrap.appendChild(
+      el("p", {
+        class: "tsql-empty",
+        text: "Code editor unavailable. Update TEDI to >= 0.2.26.",
+      }),
+    );
+  }
 
   const results = el("div", { class: "tsql-results", attrs: { "data-results-root": "1" } });
   if (session.activeTable) {
@@ -1926,7 +1973,11 @@ const STYLES_CSS = `
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-primary:hover:not([disabled]) { filter: brightness(1.1); }
 
-.tsql-editor { width: 100%; height: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--border); background: var(--background); color: var(--foreground); font-family: var(--font-mono, ui-monospace, "JetBrains Mono", monospace); font-size: 12px; resize: none; outline: none; }
+/* Code-editor container: hosts a CodeMirror EditorView mounted by
+   ctx.ui.codeEditor. The .cm-editor inside fills the container. */
+.tsql-editor { width: 100%; height: 100%; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; }
+.tsql-editor .cm-editor { height: 100%; flex: 1 1 auto; min-height: 0; }
+.tsql-editor .cm-editor.cm-focused { outline: none; }
 .tsql-results { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }

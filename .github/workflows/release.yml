@@ -38,6 +38,11 @@ jobs:
             runner: windows-latest
             sidecar_dir: windows-x86_64
             exe_suffix: .exe
+          # Both Mac targets ride macos-latest (M1 = aarch64). x86_64 is a
+          # straight Rust cross-compile; clang on Apple Silicon handles the
+          # -arch x86_64 link by default. macos-13 (Intel hosted runner) is
+          # under quota pressure and frequently times out the queue, so we
+          # avoid it entirely.
           - target: x86_64-apple-darwin
             runner: macos-latest
             sidecar_dir: macos-x86_64
@@ -67,7 +72,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             sidecar-src/target
-          key: sidecar-${{ matrix.target }}-${{ hashFiles('sidecar-src/Cargo.toml') }}
+          key: sidecar-${{ matrix.target }}-${{ hashFiles('sidecar-src/Cargo.lock', 'sidecar-src/Cargo.toml') }}
 
       - name: Build sidecar (release)
         working-directory: sidecar-src

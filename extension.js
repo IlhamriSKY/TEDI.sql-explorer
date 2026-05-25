@@ -358,6 +358,38 @@ function clearChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+/**
+ * Append a HugeIcon to `parent` via ctx.ui.icon. Tolerates older TEDI
+ * hosts that pre-date the icon API by rendering a tiny placeholder so
+ * the layout stays stable instead of jumping when buttons lose chrome.
+ */
+function appendIcon(parent, iconName, opts = {}) {
+  if (!parent) return;
+  const size = opts.size ?? 14;
+  try {
+    if (ctx?.ui?.icon) {
+      parent.appendChild(ctx.ui.icon(iconName, { size, strokeWidth: 1.75, ...opts }));
+      return;
+    }
+  } catch (err) {
+    ctx?.logger?.warn?.("icon mount failed", iconName, err);
+  }
+  const placeholder = document.createElement("span");
+  placeholder.style.display = "inline-block";
+  placeholder.style.width = `${size}px`;
+  placeholder.style.height = `${size}px`;
+  parent.appendChild(placeholder);
+}
+
+/** Returns a span with the requested icon. Just calls `appendIcon`
+ *  into a fresh span; kept as its own helper so call sites read
+ *  declaratively (`row.appendChild(makeIcon("Database01Icon"))`). */
+function makeIcon(iconName, opts = {}) {
+  const wrap = document.createElement("span");
+  appendIcon(wrap, iconName, opts);
+  return wrap;
+}
+
 function safeToast(message, variant) {
   try {
     ctx?.ui?.toast(message, { variant });
@@ -393,19 +425,20 @@ function renderHeader() {
     el(
       "div",
       { class: "tsql-header-actions" },
-      iconButton("+", "New connection", openConnectionDialog),
-      iconButton("⟲", "Restart sidecar", restartSidecarFlow),
+      iconButton("Add01Icon", "New connection", openConnectionDialog),
+      iconButton("Refresh01Icon", "Restart sidecar", restartSidecarFlow),
     ),
   );
 }
 
-function iconButton(label, title, onClick) {
-  return el("button", {
+function iconButton(iconName, title, onClick) {
+  const btn = el("button", {
     class: "tsql-icon-btn",
-    text: label,
-    attrs: { title, type: "button" },
+    attrs: { title, "aria-label": title, type: "button" },
     on: { click: onClick },
   });
+  appendIcon(btn, iconName, { size: 14 });
+  return btn;
 }
 
 // ----------------------------- Connection rail -------------------------------
@@ -427,6 +460,16 @@ function renderConnRail() {
   return list;
 }
 
+function rowActionBtn(iconName, title, onClick) {
+  const btn = el("button", {
+    class: "tsql-row-action",
+    attrs: { title, "aria-label": title, type: "button" },
+    on: { click: onClick },
+  });
+  appendIcon(btn, iconName, { size: 13 });
+  return btn;
+}
+
 function renderConnRow(c) {
   const isActive = state.active === c.id;
   return el(
@@ -444,27 +487,13 @@ function renderConnRow(c) {
       el("span", { class: "tsql-conn-name", text: c.name || c.id }),
       el("span", { class: "tsql-conn-host", text: connSubtitle(c) }),
     ),
-    el("button", {
-      class: "tsql-row-action",
-      text: "✎",
-      attrs: { title: "Edit connection", type: "button" },
-      on: {
-        click: (event) => {
-          event.stopPropagation();
-          openConnectionDialog(c);
-        },
-      },
+    rowActionBtn("PencilEdit01Icon", "Edit connection", (event) => {
+      event.stopPropagation();
+      openConnectionDialog(c);
     }),
-    el("button", {
-      class: "tsql-row-action",
-      text: "🗑",
-      attrs: { title: "Delete connection", type: "button" },
-      on: {
-        click: (event) => {
-          event.stopPropagation();
-          deleteConnection(c.id);
-        },
-      },
+    rowActionBtn("Delete02Icon", "Delete connection", (event) => {
+      event.stopPropagation();
+      deleteConnection(c.id);
     }),
   );
 }
@@ -600,8 +629,15 @@ function openConnectionDialog(existing) {
     for (const f of renderHostFields()) grid.appendChild(f);
     grid.appendChild(
       field(
-        "Allow writes",
-        checkbox(form.allow_writes, (v) => (form.allow_writes = v)),
+        "Mode",
+        select(
+          [
+            { value: "ro", label: "Read-only" },
+            { value: "rw", label: "Read + Write" },
+          ],
+          form.allow_writes ? "rw" : "ro",
+          (v) => (form.allow_writes = v === "rw"),
+        ),
       ),
     );
     grid.appendChild(
@@ -652,6 +688,7 @@ function openConnectionDialog(existing) {
             await connectFromForm(form, { test: true });
             error.style.color = "var(--primary)";
             error.textContent = "Connected successfully.";
+            safeToast(`Connected to ${form.name || form.host || form.sqlitePath}`, "success");
           } catch (err) {
             error.style.color = "var(--destructive, #ef4444)";
             error.textContent = `Test failed: ${err?.message ?? err}`;
@@ -669,6 +706,10 @@ function openConnectionDialog(existing) {
           try {
             await saveAndConnect(form);
             overlay.remove();
+            safeToast(
+              `${isEdit ? "Updated" : "Added"} connection ${form.name || form.id}`,
+              "success",
+            );
           } catch (err) {
             error.style.color = "var(--destructive, #ef4444)";
             error.textContent = err?.message ?? String(err);
@@ -877,7 +918,7 @@ function renderTreePane(session) {
       "header",
       { class: "tsql-subheader" },
       el("span", { text: "Schema" }),
-      iconButton("⟳", "Refresh", () => refreshDatabases(session, wrap)),
+      iconButton("Refresh01Icon", "Refresh", () => refreshDatabases(session, wrap)),
     ),
   );
   const list = el("ul", { class: "tsql-tree-list" });
@@ -905,14 +946,18 @@ async function loadDatabases(session, list) {
 
 function renderDbNode(session, dbName) {
   const li = el("li", { class: "tsql-tree-node tsql-node-db" });
+  const caretBox = el("span", { class: "tsql-caret" });
+  appendIcon(caretBox, "ArrowRight01Icon", { size: 11 });
+  const iconBox = el("span", { class: "tsql-tree-icon" });
+  appendIcon(iconBox, "Database01Icon", { size: 14 });
   const head = el(
     "button",
     {
       class: "tsql-tree-row",
       attrs: { type: "button" },
     },
-    el("span", { class: "tsql-caret", text: "▸" }),
-    el("span", { class: "tsql-tree-icon", text: "🛢" }),
+    caretBox,
+    iconBox,
     el("span", { class: "tsql-tree-label", text: dbName }),
   );
   li.appendChild(head);
@@ -921,10 +966,9 @@ function renderDbNode(session, dbName) {
   li.appendChild(childList);
   let loaded = false;
   head.addEventListener("click", async () => {
-    const caret = head.querySelector(".tsql-caret");
     const open = childList.style.display !== "none";
     childList.style.display = open ? "none" : "";
-    if (caret) caret.textContent = open ? "▸" : "▾";
+    caretBox.classList.toggle("is-open", !open);
     if (!loaded && !open) {
       loaded = true;
       try {
@@ -954,11 +998,15 @@ async function loadSchemas(session, dbName, parent) {
 
 function renderSchemaNode(session, dbName, schemaName) {
   const li = el("li", { class: "tsql-tree-node tsql-node-schema" });
+  const caretBox = el("span", { class: "tsql-caret" });
+  appendIcon(caretBox, "ArrowRight01Icon", { size: 11 });
+  const iconBox = el("span", { class: "tsql-tree-icon" });
+  appendIcon(iconBox, "Folder01Icon", { size: 14 });
   const head = el(
     "button",
     { class: "tsql-tree-row", attrs: { type: "button" } },
-    el("span", { class: "tsql-caret", text: "▸" }),
-    el("span", { class: "tsql-tree-icon", text: "📁" }),
+    caretBox,
+    iconBox,
     el("span", { class: "tsql-tree-label", text: schemaName }),
   );
   li.appendChild(head);
@@ -967,10 +1015,9 @@ function renderSchemaNode(session, dbName, schemaName) {
   li.appendChild(childList);
   let loaded = false;
   head.addEventListener("click", async () => {
-    const caret = head.querySelector(".tsql-caret");
     const open = childList.style.display !== "none";
     childList.style.display = open ? "none" : "";
-    if (caret) caret.textContent = open ? "▸" : "▾";
+    caretBox.classList.toggle("is-open", !open);
     if (!loaded && !open) {
       loaded = true;
       try {
@@ -999,6 +1046,8 @@ async function loadTables(session, database, schema, parent) {
 
 function renderTableNode(session, database, schema, info) {
   const li = el("li", { class: `tsql-tree-node tsql-node-${info.kind}` });
+  const iconBox = el("span", { class: "tsql-tree-icon" });
+  appendIcon(iconBox, info.kind === "view" ? "ViewIcon" : "Table01Icon", { size: 14 });
   const head = el(
     "button",
     {
@@ -1010,7 +1059,7 @@ function renderTableNode(session, database, schema, info) {
       },
     },
     el("span", { class: "tsql-caret tsql-caret-empty" }),
-    el("span", { class: "tsql-tree-icon", text: info.kind === "view" ? "👁" : "▦" }),
+    iconBox,
     el("span", { class: "tsql-tree-label", text: info.name }),
     info.rows != null
       ? el("span", { class: "tsql-tree-meta", text: `${info.rows}` })
@@ -1022,28 +1071,42 @@ function renderTableNode(session, database, schema, info) {
 
 // ----------------------------- Editor + results ------------------------------
 
+/** Button with a HugeIcon on the left and a text label. The icon is the
+ *  same chrome class TEDI core's header buttons use (size 13, stroke 1.75). */
+function textBtn(text, iconName, opts = {}) {
+  const cls = `tsql-btn${opts.primary ? " is-primary" : ""}${opts.disabled ? " is-disabled" : ""}`;
+  const btn = el("button", {
+    class: cls,
+    attrs: {
+      type: "button",
+      title: opts.title,
+      "aria-label": opts.title ?? text,
+      disabled: opts.disabled ? "true" : undefined,
+    },
+    on: opts.onClick ? { click: opts.onClick } : undefined,
+  });
+  if (iconName) appendIcon(btn, iconName, { size: 13 });
+  btn.appendChild(document.createTextNode(text));
+  return btn;
+}
+
 function renderEditorAndResults(session) {
   const wrap = el("div", { class: "tsql-main" });
   const toolbar = el(
     "div",
     { class: "tsql-toolbar" },
-    el("button", {
-      class: "tsql-btn is-primary",
-      text: "▶ Run",
-      attrs: { type: "button", title: "Run query (Ctrl+Enter)" },
-      on: { click: () => runActiveQuery() },
+    textBtn("Run", "PlayIcon", {
+      primary: true,
+      title: "Run query (Ctrl+Enter)",
+      onClick: () => runActiveQuery(),
     }),
-    el("button", {
-      class: "tsql-btn",
-      text: "■ Stop",
-      attrs: { type: "button", title: "Cancel current statement" },
-      on: { click: () => cancelActiveQuery() },
+    textBtn("Stop", "SquareIcon", {
+      title: "Cancel current statement",
+      onClick: () => cancelActiveQuery(),
     }),
-    el("button", {
-      class: "tsql-btn",
-      text: "⬇ Export",
-      attrs: { type: "button", title: "Export current result" },
-      on: { click: () => openExportDialog() },
+    textBtn("Export", "Download01Icon", {
+      title: "Export current result",
+      onClick: () => openExportDialog(),
     }),
   );
   wrap.appendChild(toolbar);
@@ -1180,7 +1243,10 @@ function renderCellContent(value) {
   if (typeof value === "number") return document.createTextNode(String(value));
   if (typeof value === "string") return document.createTextNode(value);
   if (value && typeof value === "object" && value.__type === "bytes") {
-    return el("span", { class: "tsql-cell-bytes", text: `⨂ ${value.size ?? "?"} bytes` });
+    const wrap = el("span", { class: "tsql-cell-bytes" });
+    appendIcon(wrap, "CodeIcon", { size: 12 });
+    wrap.appendChild(document.createTextNode(` ${value.size ?? "?"} bytes`));
+    return wrap;
   }
   return document.createTextNode(JSON.stringify(value));
 }
@@ -1246,28 +1312,20 @@ function renderTableGrid(container, session) {
       el(
         "div",
         { class: "tsql-toolbar" },
-        el("button", {
-          class: "tsql-btn",
-          text: "+ Row",
-          attrs: { type: "button" },
-          on: { click: () => openInsertDialog(session) },
+        textBtn("Row", "Add01Icon", {
+          title: "Insert row",
+          onClick: () => openInsertDialog(session),
         }),
-        el("button", {
-          class: "tsql-btn",
-          text: "⟳ Reload",
-          attrs: { type: "button" },
-          on: { click: () => loadTableRows(session, snap.page) },
+        textBtn("Reload", "Refresh01Icon", {
+          title: "Reload current page",
+          onClick: () => loadTableRows(session, snap.page),
         }),
-        el("button", {
-          class: "tsql-btn",
-          text: "Close",
-          attrs: { type: "button" },
-          on: {
-            click: () => {
-              session.activeTable = null;
-              session.tableSnapshot = null;
-              rerender();
-            },
+        textBtn("Close", "Cancel01Icon", {
+          title: "Close table view",
+          onClick: () => {
+            session.activeTable = null;
+            session.tableSnapshot = null;
+            rerender();
           },
         }),
       ),
@@ -1311,12 +1369,7 @@ function rowActionsCell(session, rowIdx) {
   return el(
     "td",
     { class: "tsql-grid-actions-col" },
-    el("button", {
-      class: "tsql-row-action",
-      text: "🗑",
-      attrs: { type: "button", title: "Delete row" },
-      on: { click: () => deleteRowFromGrid(session, rowIdx) },
-    }),
+    rowActionBtn("Delete02Icon", "Delete row", () => deleteRowFromGrid(session, rowIdx)),
   );
 }
 
@@ -1327,24 +1380,23 @@ function renderPager(session, snap) {
   const lastPage = total != null ? Math.max(0, Math.ceil(total / snap.page_size) - 1) : null;
   const hasNext = lastPage == null ? snap.rows.length === Number(snap.page_size) : snap.page < lastPage;
   pager.appendChild(
-    el("button", {
-      class: "tsql-btn",
-      text: "‹ Prev",
-      attrs: { type: "button", disabled: hasPrev ? null : "true" },
-      on: { click: () => hasPrev && loadTableRows(session, snap.page - 1) },
+    textBtn("Prev", "ArrowLeft01Icon", {
+      title: "Previous page",
+      disabled: !hasPrev,
+      onClick: () => hasPrev && loadTableRows(session, snap.page - 1),
     }),
   );
   pager.appendChild(
     el("span", { class: "tsql-pager-label", text: `Page ${snap.page + 1}${lastPage != null ? ` / ${lastPage + 1}` : ""}` }),
   );
-  pager.appendChild(
-    el("button", {
-      class: "tsql-btn",
-      text: "Next ›",
-      attrs: { type: "button", disabled: hasNext ? null : "true" },
-      on: { click: () => hasNext && loadTableRows(session, snap.page + 1) },
-    }),
-  );
+  const nextBtn = textBtn("Next", null, {
+    title: "Next page",
+    disabled: !hasNext,
+    onClick: () => hasNext && loadTableRows(session, snap.page + 1),
+  });
+  // Append the arrow icon AFTER the label so it sits on the right.
+  appendIcon(nextBtn, "ArrowRight01Icon", { size: 13 });
+  pager.appendChild(nextBtn);
   return pager;
 }
 
@@ -1540,6 +1592,7 @@ async function openInsertDialog(session) {
               });
               overlay.remove();
               await loadTableRows(session, session.tableSnapshot?.page ?? 0);
+              safeToast(`Inserted row into ${session.activeTable.table}`, "success");
             } catch (err) {
               error.style.color = "var(--destructive, #ef4444)";
               error.textContent = err?.message ?? String(err);
@@ -1707,6 +1760,10 @@ async function openExportDialog() {
                 URL.revokeObjectURL(url);
               }, 1500);
               overlay.remove();
+              safeToast(
+                `Exported ${resp.export.rows ?? 0} rows as ${a.download}`,
+                "success",
+              );
             } catch (err) {
               safeToast(`Export failed: ${err?.message ?? err}`, "error");
             }
@@ -1735,7 +1792,9 @@ async function restartSidecarFlow() {
   state.sessions = {};
   state.active = null;
   rerender();
-  ensureSidecar().catch((err) => safeToast(`Restart failed: ${err?.message ?? err}`, "error"));
+  ensureSidecar()
+    .then(() => safeToast("Sidecar restarted", "success"))
+    .catch((err) => safeToast(`Restart failed: ${err?.message ?? err}`, "error"));
 }
 
 // ----------------------------- Styles ----------------------------------------
@@ -1759,8 +1818,8 @@ const STYLES_CSS = `
 .tsql-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); user-select: none; }
 .tsql-title { font-weight: 600; font-size: 12px; letter-spacing: 0.02em; }
 .tsql-header-actions { display: flex; gap: 4px; }
-.tsql-icon-btn { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--foreground); cursor: pointer; font-size: 12px; line-height: 1; }
-.tsql-icon-btn:hover { background: var(--accent, rgba(127,127,127,0.12)); border-color: var(--border); }
+.tsql-icon-btn { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.tsql-icon-btn:hover { background: var(--accent, rgba(127,127,127,0.12)); border-color: var(--border); color: var(--foreground); }
 .tsql-body { display: grid; grid-template-columns: 220px 1fr; flex: 1 1 auto; min-height: 0; }
 .tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 4px 0; }
 .tsql-conn-row { display: grid; grid-template-columns: 24px 1fr 22px 22px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; }
@@ -1783,16 +1842,19 @@ const STYLES_CSS = `
 .tsql-tree-node { padding: 0; }
 .tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px 1fr auto; align-items: center; gap: 4px; padding: 3px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; }
 .tsql-tree-row:hover { background: var(--accent, rgba(127,127,127,0.08)); }
-.tsql-caret { width: 12px; color: var(--muted-foreground); font-size: 10px; }
+.tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }
+.tsql-caret.is-open { transform: rotate(90deg); }
 .tsql-caret-empty { visibility: hidden; }
-.tsql-tree-icon { font-size: 12px; }
+.tsql-tree-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); }
+.tsql-tree-row:hover .tsql-tree-icon, .tsql-tree-row:hover .tsql-caret { color: var(--foreground); }
 .tsql-tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-tree-meta { font-size: 10px; color: var(--muted-foreground); padding-left: 8px; }
 .tsql-tree-error { padding: 4px 12px; color: var(--destructive, #ef4444); font-size: 11px; }
 .tsql-tree-empty { padding: 4px 16px; color: var(--muted-foreground); font-size: 11px; }
 .tsql-main { display: grid; grid-template-rows: auto 1fr 1.4fr; min-height: 0; min-width: 0; }
 .tsql-toolbar { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
-.tsql-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; }
+.tsql-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; line-height: 1; }
+.tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 .tsql-btn:hover:not([disabled]) { background: var(--accent, rgba(127,127,127,0.08)); }
 .tsql-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
@@ -1811,7 +1873,8 @@ const STYLES_CSS = `
 .tsql-grid tbody tr:hover { background: var(--accent, rgba(127,127,127,0.04)); }
 .tsql-cell-null { color: var(--muted-foreground); font-style: italic; }
 .tsql-cell-bool { color: var(--primary, #3b82f6); font-weight: 600; }
-.tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); }
+.tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
+.tsql-row-action { display: inline-flex; align-items: center; justify-content: center; }
 .tsql-grid-actions-col { width: 24px; }
 .tsql-cell-input { width: 100%; padding: 1px 4px; font-size: 11px; }
 .tsql-cell-saved { background: rgba(34, 197, 94, 0.18); transition: background 0.6s ease; }

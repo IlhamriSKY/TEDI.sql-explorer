@@ -2,6 +2,24 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.1 (2026-05-25)
+
+UI polish, all icons now HugeIcons (matched TEDI core chrome).
+
+- Every Unicode / emoji icon replaced with a `ctx.ui.icon(...)`
+  HugeIcon call so the SQL Explorer button row reads as part of the
+  same icon family as the host header (Add01Icon, Refresh01Icon,
+  PlayIcon, Database01Icon, Folder01Icon, Table01Icon, ViewIcon,
+  Delete02Icon, PencilEdit01Icon, ArrowLeft01Icon, ArrowRight01Icon,
+  Cancel01Icon, Download01Icon, CodeIcon, SquareIcon).
+- Tree carets rotate via CSS now (one icon mount per row, no React
+  root churn on expand/collapse).
+- Connection dialog: "Allow writes" checkbox replaced with a "Mode"
+  dropdown (Read-only / Read + Write).
+- Success toasts: connection test, add/update connection, insert row,
+  export, and sidecar restart now surface a green toast on success.
+- Requires TEDI >= 0.2.26 for the new `ctx.ui.icon` host API.
+
 ## 0.2.0 (2026-05-25)
 
 UI surface change. The workbench moved off the right-panel slot into a

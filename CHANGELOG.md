@@ -2,6 +2,22 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.0 (2026-05-25)
+
+UI surface change. The workbench moved off the right-panel slot into a
+full workspace tab, and the toggle moved off the status bar into a
+header button next to the SSH icon.
+
+- Header button (right of SSH) opens or focuses the SQL Explorer tab.
+  Mod+Alt+D keybind unchanged.
+- Tab content uses the full workspace area instead of the narrow right
+  panel. Connection rail, schema tree, editor, and result grid all get
+  more breathing room.
+- Manifest: `panels[].surface` changed from `right` to `tab`. The new
+  surface skips the auto-rendered status-bar toggle entirely.
+- Requires TEDI >= 0.2.26 for the new `ctx.headerBar` and
+  `ctx.tabs.openExtensionTab` host APIs.
+
 ## 0.1.0 (2026-05-25)
 
 Initial release.

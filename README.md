@@ -29,11 +29,12 @@ In TEDI:
 3. Paste `IlhamriSKY/TEDI.sql-explorer` (or the full URL).
 4. Click **Review → Install**.
 
-That's it. No manual settings to flip. The extension registers a panel
-+ command + keybinding with TEDI's generic extension API at activate;
-from then on the **SQL Explorer** button in the status bar (or
-`Mod+Alt+D`) opens the workbench in the right slot until you disable or
-uninstall.
+That's it. No manual settings to flip. The extension registers a
+header button (next to the SSH icon) + command + keybinding with
+TEDI's generic extension API at activate; from then on the **SQL
+Explorer** button (or `Mod+Alt+D`) opens the workbench in a workspace
+tab. Re-clicking focuses the existing tab instead of opening a
+duplicate.
 
 TEDI hits `releases/latest` on this repo, downloads the `.zip` asset
 produced by the [release workflow](.github/workflows/release.yml), runs
@@ -158,7 +159,9 @@ Declared in `manifest.json`:
 
 | Permission                       | What it lets the extension do |
 |----------------------------------|-------------------------------|
-| `panels:register`                | Register the right-panel renderer + auto-render the status-bar toggle button from the manifest. |
+| `panels:register`                | Register the tab renderer that paints the workbench. |
+| `headerbar:write`                | Add the header button next to the SSH icon. |
+| `tabs:open`                      | Open / focus the SQL Explorer workspace tab. |
 | `ui:toast`                       | Surface connect / query / export results. |
 | `settings:read` / `settings:write` | Persist saved connections (sans password) under `ext:tedi.sql-explorer:connections`. |
 | `secrets:read` / `secrets:write` | Read / write each connection's password in the OS keychain (`ext:tedi.sql-explorer:conn:<id>`). |
@@ -173,9 +176,10 @@ is the only thing that ever holds an open database socket.
 
 ## Compatibility
 
-Requires TEDI **>= 0.2.20** for `panels[].compact` semantics + stable
-`ctx.os.platform`/`arch` + `shell_bg_spawn_direct` (same baseline the
-`tedi.screenshot` extension declares).
+Requires TEDI **>= 0.2.26** for `ctx.headerBar.setItem` (header button
+slot next to SSH) and `ctx.tabs.openExtensionTab` (workspace tab
+hosting). Earlier TEDI builds (0.2.20+) had the right-panel slot only
+and would reject this manifest's `panels[].surface: "tab"` value.
 
 If a missing host API at runtime breaks anything, the extension fires
 a single warning toast at activate, names the missing function

@@ -86,13 +86,39 @@ export async function activate(context) {
   injectStyles();
   await loadSavedConnections();
 
+  // Open or focus the workspace tab. Tabs reuse on identical reuseKey
+  // so the user doesn't end up with N copies of the workbench.
   ctx.registerCommandHandler(CMD_TOGGLE, () => {
     try {
-      ctx.panel.toggle(PANEL_ID);
+      ctx.tabs.openExtensionTab({
+        panelId: PANEL_ID,
+        title: "SQL Explorer",
+        icon: "logo.png",
+        reuseKey: "main",
+      });
     } catch (err) {
-      ctx?.logger?.error?.("toggle failed", err);
+      ctx?.logger?.error?.("open tab failed", err);
     }
   });
+
+  // Header button (right of SSH icon). One click opens the tab.
+  try {
+    ctx.headerBar.setItem({
+      id: "open",
+      icon: "logo.png",
+      tooltip: "SQL Explorer",
+      onClick: () => {
+        ctx.tabs.openExtensionTab({
+          panelId: PANEL_ID,
+          title: "SQL Explorer",
+          icon: "logo.png",
+          reuseKey: "main",
+        });
+      },
+    });
+  } catch (err) {
+    ctx?.logger?.warn?.("headerBar.setItem failed", err);
+  }
 
   ctx.registerCommandHandler(CMD_RUN, () => {
     runActiveQuery().catch((err) => ctx?.logger?.error?.("run failed", err));
@@ -138,7 +164,8 @@ function checkRequiredApis(c) {
   if (typeof c?.os?.platform !== "string") missing.push("ctx.os.platform");
   if (typeof c?.installPath !== "string") missing.push("ctx.installPath");
   if (typeof c?.registerPanelRenderer !== "function") missing.push("ctx.registerPanelRenderer");
-  if (typeof c?.panel?.toggle !== "function") missing.push("ctx.panel.toggle");
+  if (typeof c?.tabs?.openExtensionTab !== "function") missing.push("ctx.tabs.openExtensionTab");
+  if (typeof c?.headerBar?.setItem !== "function") missing.push("ctx.headerBar");
   if (typeof c?.secrets?.set !== "function") missing.push("ctx.secrets");
   if (typeof c?.settings?.set !== "function") missing.push("ctx.settings");
   return missing;
@@ -358,6 +385,7 @@ function rerender() {
 }
 
 function renderHeader() {
+  // Close button is dropped: the host tab strip already has an X.
   return el(
     "header",
     { class: "tsql-header" },
@@ -367,7 +395,6 @@ function renderHeader() {
       { class: "tsql-header-actions" },
       iconButton("+", "New connection", openConnectionDialog),
       iconButton("⟲", "Restart sidecar", restartSidecarFlow),
-      iconButton("×", "Close panel", () => ctx?.panel?.close(PANEL_ID)),
     ),
   );
 }

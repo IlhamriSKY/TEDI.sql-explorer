@@ -1,7 +1,7 @@
 {
   "id": "tedi.sql-explorer",
   "name": "SQL Explorer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HeidiSQL-style database viewer + query workbench for MySQL, PostgreSQL, and SQLite. Connection manager (encrypted in OS keychain), schema tree, multi-statement query editor, paginated result grid with inline edit, INSERT/UPDATE/DELETE without writing SQL, export to CSV / JSON / SQL. Backed by a self-contained native sidecar (Rust + sqlx) that the TEDI core does not bundle; uninstalling the extension removes every database driver with it. Sidecar binds 127.0.0.1 only and enforces a per-session bearer token; credentials never leave the local machine.",
   "author": "IlhamRiski - ilhamriski.com",
   "homepage": "https://github.com/IlhamriSKY/TEDI.sql-explorer",
@@ -9,6 +9,8 @@
   "main": "extension.js",
   "permissions": [
     "panels:register",
+    "headerbar:write",
+    "tabs:open",
     "ui:toast",
     "settings:read",
     "settings:write",
@@ -41,15 +43,13 @@
       {
         "id": "sql-explorer",
         "title": "SQL Explorer",
-        "surface": "right",
+        "surface": "tab",
         "icon": "logo.png",
-        "defaultOpen": false,
-        "toggleCommand": "tedi.sql-explorer.toggle",
-        "hideHostHeader": true
+        "toggleCommand": "tedi.sql-explorer.toggle"
       }
     ]
   },
   "engines": {
-    "tedi": ">=0.2.20"
+    "tedi": ">=0.2.26"
   }
 }

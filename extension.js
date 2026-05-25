@@ -1530,6 +1530,7 @@ async function deleteRowFromGrid(session, rowIdx) {
       },
     });
     await loadTableRows(session, snap.page);
+    safeToast("Row deleted", "success");
   } catch (err) {
     safeToast(`Delete failed: ${err?.message ?? err}`, "error");
   }

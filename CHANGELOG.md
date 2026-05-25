@@ -2,6 +2,19 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.2 (2026-05-25)
+
+Header button + toolbar polish.
+
+- Header button (next to SSH) now paints `Database01Icon` from
+  HugeIcons via the new `hugeicon:` icon prefix, matching the host's
+  SSH / Extensions / Settings buttons in stroke and color.
+- Toolbar buttons (Run / Stop / Export / Reload / Row / Close / Prev /
+  Next): label text is wrapped in a `<span>` so CSS `gap` rules render
+  the spacing between icon and text properly. They were touching
+  before because anonymous text nodes are not flex children.
+- Toast on delete-row success.
+
 ## 0.2.1 (2026-05-25)
 
 UI polish, all icons now HugeIcons (matched TEDI core chrome).

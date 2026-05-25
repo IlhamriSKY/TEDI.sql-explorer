@@ -102,10 +102,13 @@ export async function activate(context) {
   });
 
   // Header button (right of SSH icon). One click opens the tab.
+  // Uses the host's HugeIcon set via the `hugeicon:` icon prefix so the
+  // button paints with `currentColor` and reads as part of the same icon
+  // family as TEDI core's SSH / Extensions / Settings buttons.
   try {
     ctx.headerBar.setItem({
       id: "open",
-      icon: "logo.png",
+      icon: "hugeicon:Database01Icon",
       tooltip: "SQL Explorer",
       onClick: () => {
         ctx.tabs.openExtensionTab({
@@ -1086,7 +1089,12 @@ function textBtn(text, iconName, opts = {}) {
     on: opts.onClick ? { click: opts.onClick } : undefined,
   });
   if (iconName) appendIcon(btn, iconName, { size: 13 });
-  btn.appendChild(document.createTextNode(text));
+  // Wrap the label in a span so CSS `gap` treats it as a flex child.
+  // A bare text node is anonymous inline content and falls outside the
+  // gap algorithm, which is why icon+label looked glued together.
+  const label = document.createElement("span");
+  label.textContent = text;
+  btn.appendChild(label);
   return btn;
 }
 

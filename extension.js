@@ -87,19 +87,29 @@ export async function activate(context) {
   await loadSavedConnections();
 
   // Open or focus the workspace tab. Tabs reuse on identical reuseKey
-  // so the user doesn't end up with N copies of the workbench.
-  ctx.registerCommandHandler(CMD_TOGGLE, () => {
+  // so the user doesn't end up with N copies of the workbench. We also
+  // collapse the left sidebar (file explorer + SCM) so the workbench
+  // gets the full workspace width on open; the user can re-expand it
+  // from the header toggle whenever they want it back.
+  function openWorkbenchTab() {
+    try {
+      ctx.app?.setSidebarVisible?.(false);
+    } catch (err) {
+      ctx?.logger?.warn?.("sidebar collapse failed", err);
+    }
     try {
       ctx.tabs.openExtensionTab({
         panelId: PANEL_ID,
         title: "SQL Explorer",
-        icon: "logo.png",
+        icon: "hugeicon:Database01Icon",
         reuseKey: "main",
       });
     } catch (err) {
       ctx?.logger?.error?.("open tab failed", err);
     }
-  });
+  }
+
+  ctx.registerCommandHandler(CMD_TOGGLE, () => openWorkbenchTab());
 
   // Header button (right of SSH icon). One click opens the tab.
   // Uses the host's HugeIcon set via the `hugeicon:` icon prefix so the
@@ -110,14 +120,7 @@ export async function activate(context) {
       id: "open",
       icon: "hugeicon:Database01Icon",
       tooltip: "SQL Explorer",
-      onClick: () => {
-        ctx.tabs.openExtensionTab({
-          panelId: PANEL_ID,
-          title: "SQL Explorer",
-          icon: "logo.png",
-          reuseKey: "main",
-        });
-      },
+      onClick: () => openWorkbenchTab(),
     });
   } catch (err) {
     ctx?.logger?.warn?.("headerBar.setItem failed", err);
@@ -463,6 +466,44 @@ function renderConnRail() {
   return list;
 }
 
+/**
+ * Stylised brand mark per backend kind. Each `<svg>` is a hand-drawn
+ * abstraction (not a copy of the official trademark) sized to fit the
+ * conn-row badge box. Trademarks belong to their respective owners; we
+ * use a generic silhouette here so the row reads as "MySQL-like" /
+ * "Postgres-like" / "SQLite-like" at a glance without shipping the
+ * official assets.
+ */
+const KIND_SVG = {
+  mysql:
+    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M2.2 13.5c2.3-2.1 5-3 7.8-2.7 2.1.2 3.5 1.4 5.2 2.3 1.4.7 2.9 1 4.3.4-.6 1.9-2 3.4-4 4-1.9.5-3.6-.2-5.3-.7-2.2-.7-4.5-1.1-6.8-.5C3 16.8 2.2 15.1 2.2 13.5z"/>' +
+    '<circle cx="17.5" cy="9" r="1.2"/>' +
+    '<path d="M14.6 7.4c.5-1.2 1.5-2 2.7-2.2-.2 1.2-.9 2.2-2.1 2.7" opacity="0.7"/>' +
+    "</svg>",
+  postgres:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M4 14c0-5 4-9 9-9s7 3 7 7c0 4-2 7-5 7-1 0-2-1-2-2 0-1 1-1.6 2-1.6"/>' +
+    '<path d="M9 8c0 1 .5 2 1.2 2.6"/>' +
+    '<path d="M7 18c-1-2-1-4 0-6"/>' +
+    '<circle cx="14.5" cy="9.5" r=".7" fill="currentColor" stroke="none"/>' +
+    "</svg>",
+  sqlite:
+    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M6 3h9l4 4v14H6V3z" opacity="0.85"/>' +
+    '<path d="M15 3v4h4" fill="none" stroke="var(--background)" stroke-width="1.5"/>' +
+    '<ellipse cx="13" cy="14" rx="4.5" ry="1.6" fill="none" stroke="var(--background)" stroke-width="1.2"/>' +
+    '<path d="M8.5 14v2.5c0 .9 2 1.7 4.5 1.7s4.5-.8 4.5-1.7V14" fill="none" stroke="var(--background)" stroke-width="1.2"/>' +
+    "</svg>",
+};
+
+function kindBadge(kind) {
+  const wrap = el("span", { class: `tsql-conn-kind tsql-kind-${kind}`, attrs: { "aria-label": kind } });
+  // Static, author-controlled SVG strings — safe to assign via innerHTML.
+  wrap.innerHTML = KIND_SVG[kind] || "";
+  return wrap;
+}
+
 function rowActionBtn(iconName, title, onClick) {
   const btn = el("button", {
     class: "tsql-row-action",
@@ -483,7 +524,7 @@ function renderConnRow(c) {
         click: () => selectConnection(c.id),
       },
     },
-    el("span", { class: `tsql-conn-kind tsql-kind-${c.kind}`, text: c.kind.slice(0, 2).toUpperCase() }),
+    kindBadge(c.kind),
     el(
       "div",
       { class: "tsql-conn-meta" },
@@ -605,8 +646,12 @@ function openConnectionDialog(existing) {
         }),
       ),
       field(
-        "Database",
-        input({ value: form.database, onInput: (v) => (form.database = v) }),
+        "Database (optional)",
+        input({
+          value: form.database,
+          onInput: (v) => (form.database = v),
+          placeholder: "leave blank to browse all",
+        }),
       ),
       field(
         "TLS",
@@ -1827,29 +1872,41 @@ const STYLES_CSS = `
 .tsql-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); user-select: none; }
 .tsql-title { font-weight: 600; font-size: 12px; letter-spacing: 0.02em; }
 .tsql-header-actions { display: flex; gap: 4px; }
-.tsql-icon-btn { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.tsql-icon-btn { width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: background 0.12s ease, color 0.12s ease; }
 .tsql-icon-btn:hover { background: var(--accent, rgba(127,127,127,0.12)); border-color: var(--border); color: var(--foreground); }
-.tsql-body { display: grid; grid-template-columns: 220px 1fr; flex: 1 1 auto; min-height: 0; }
-.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 4px 0; }
-.tsql-conn-row { display: grid; grid-template-columns: 24px 1fr 22px 22px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; }
+
+/* Responsive 2-pane shell: connection rail + workspace. The rail shrinks
+   on narrow windows; below 720 px the connection list collapses into a
+   horizontal strip above the workspace. */
+.tsql-body { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
+.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 4px 0; min-width: 0; }
+.tsql-conn-row { display: grid; grid-template-columns: 26px 1fr 22px 22px; gap: 6px; align-items: center; padding: 5px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
 .tsql-conn-row:hover { background: var(--accent, rgba(127,127,127,0.06)); }
 .tsql-conn-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); border-left-color: var(--primary, #3b82f6); }
-.tsql-conn-kind { width: 22px; height: 18px; border-radius: 4px; background: var(--muted, #374151); color: var(--primary-foreground, #fff); font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-.tsql-kind-mysql { background: #0e7490; }
-.tsql-kind-postgres { background: #1e3a8a; }
-.tsql-kind-sqlite { background: #3f6212; }
-.tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; }
+
+/* Brand badge: 24-square box, holds the inline SVG mark. Background tint
+   uses the official-ish brand colours so the row reads as MySQL / Postgres /
+   SQLite at a glance without depending on the text. */
+.tsql-conn-kind { width: 24px; height: 24px; border-radius: 6px; color: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
+.tsql-conn-kind svg { width: 18px; height: 18px; }
+.tsql-kind-mysql { background: #00758f; }
+.tsql-kind-postgres { background: #336791; }
+.tsql-kind-sqlite { background: #0f5b8a; }
+
+.tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 .tsql-conn-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-conn-host { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 12px; border-radius: 4px; }
+.tsql-row-action { width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .tsql-row-action:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
-.tsql-workspace { display: grid; grid-template-columns: 240px 1fr; min-width: 0; min-height: 0; }
-.tsql-tree { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; }
-.tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
+
+/* Workspace: schema tree (auto-shrinking) + editor / results column. */
+.tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
+.tsql-tree { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; min-width: 0; }
+.tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); gap: 8px; }
 .tsql-tree-list { list-style: none; margin: 0; padding: 4px 0; }
 .tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tsql-tree-node { padding: 0; }
-.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px 1fr auto; align-items: center; gap: 4px; padding: 3px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; }
+.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: 4px; }
 .tsql-tree-row:hover { background: var(--accent, rgba(127,127,127,0.08)); }
 .tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }
 .tsql-caret.is-open { transform: rotate(90deg); }
@@ -1860,50 +1917,79 @@ const STYLES_CSS = `
 .tsql-tree-meta { font-size: 10px; color: var(--muted-foreground); padding-left: 8px; }
 .tsql-tree-error { padding: 4px 12px; color: var(--destructive, #ef4444); font-size: 11px; }
 .tsql-tree-empty { padding: 4px 16px; color: var(--muted-foreground); font-size: 11px; }
-.tsql-main { display: grid; grid-template-rows: auto 1fr 1.4fr; min-height: 0; min-width: 0; }
-.tsql-toolbar { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
-.tsql-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; line-height: 1; }
-.tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-.tsql-btn:hover:not([disabled]) { background: var(--accent, rgba(127,127,127,0.08)); }
-.tsql-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.tsql-main { display: grid; grid-template-rows: auto minmax(80px, 1fr) minmax(120px, 1.4fr); min-height: 0; min-width: 0; }
+.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); flex-wrap: wrap; }
+.tsql-btn { padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; line-height: 1; transition: background 0.12s ease, border-color 0.12s ease; }
+.tsql-btn:hover:not([disabled]) { background: var(--accent, rgba(127,127,127,0.08)); border-color: var(--ring, var(--border)); }
+.tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-primary:hover:not([disabled]) { filter: brightness(1.1); }
+
 .tsql-editor { width: 100%; height: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--border); background: var(--background); color: var(--foreground); font-family: var(--font-mono, ui-monospace, "JetBrains Mono", monospace); font-size: 12px; resize: none; outline: none; }
 .tsql-results { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
-.tsql-result-tab { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; }
+.tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
+.tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
+.tsql-result-tab:hover { color: var(--foreground); }
 .tsql-result-tab.is-active { color: var(--foreground); border-color: var(--primary, #3b82f6); background: var(--accent, rgba(127,127,127,0.08)); }
-.tsql-result-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0; }
-.tsql-result-meta { padding: 6px 10px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); }
+.tsql-result-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0; display: flex; flex-direction: column; }
+.tsql-result-meta { padding: 6px 12px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* Result / table grid — sticky header with subtle shadow, zebra rows,
+   no horizontal overflow surprise. */
 .tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
-.tsql-grid { border-collapse: collapse; width: 100%; font-size: 11px; }
-.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 4px 8px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; }
-.tsql-grid tbody td { padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-.tsql-grid tbody tr:hover { background: var(--accent, rgba(127,127,127,0.04)); }
-.tsql-cell-null { color: var(--muted-foreground); font-style: italic; }
+.tsql-grid-wrap.is-editable { border-top: 1px solid var(--border); }
+.tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
+.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; box-shadow: 0 1px 0 0 var(--border); user-select: none; }
+.tsql-grid tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.tsql-grid tbody tr:nth-child(even) td { background: var(--accent, rgba(127,127,127,0.025)); }
+.tsql-grid tbody tr:hover td { background: var(--accent, rgba(127,127,127,0.08)); }
+.tsql-cell-null { color: var(--muted-foreground); font-style: italic; opacity: 0.7; }
 .tsql-cell-bool { color: var(--primary, #3b82f6); font-weight: 600; }
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
-.tsql-row-action { display: inline-flex; align-items: center; justify-content: center; }
-.tsql-grid-actions-col { width: 24px; }
-.tsql-cell-input { width: 100%; padding: 1px 4px; font-size: 11px; }
-.tsql-cell-saved { background: rgba(34, 197, 94, 0.18); transition: background 0.6s ease; }
-.tsql-pager { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); }
-.tsql-pager-label { font-size: 11px; color: var(--muted-foreground); }
-.tsql-empty { padding: 16px 12px; color: var(--muted-foreground); font-size: 12px; }
-.tsql-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2000; }
-.tsql-dialog { background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; min-width: 320px; max-width: 90%; max-height: 90%; overflow-y: auto; box-shadow: 0 16px 40px rgba(0,0,0,0.35); }
-.tsql-dialog-title { margin: 0 0 12px; font-size: 13px; font-weight: 600; }
-.tsql-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
-.tsql-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted-foreground); }
+.tsql-grid-actions-col { width: 30px; }
+.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--primary, #3b82f6); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; }
+.tsql-cell-saved { background: rgba(34, 197, 94, 0.22) !important; transition: background 0.6s ease; }
+
+.tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
+.tsql-pager-label { font-size: 11px; color: var(--muted-foreground); min-width: 80px; text-align: center; }
+.tsql-empty { padding: 18px 14px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
+
+/* Modal dialog. */
+.tsql-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2000; backdrop-filter: blur(2px); }
+.tsql-dialog { background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
+.tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
+.tsql-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px 14px; }
+.tsql-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--muted-foreground); min-width: 0; }
 .tsql-field.is-full { grid-column: 1 / -1; }
-.tsql-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
-.tsql-input { padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; }
-.tsql-input:focus { outline: 1px solid var(--primary, #3b82f6); outline-offset: -1px; }
-.tsql-checkbox { width: 14px; height: 14px; }
-.tsql-form-error { margin: 8px 0 0; min-height: 14px; font-size: 11px; color: var(--destructive, #ef4444); }
-.tsql-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.tsql-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
+
+/* Inputs + native dropdown. Native arrow + pointer cursor on selects. */
+.tsql-input { padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; transition: border-color 0.12s ease, box-shadow 0.12s ease; }
+.tsql-input:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
+.tsql-input::placeholder { color: var(--muted-foreground); opacity: 0.6; }
+select.tsql-input { cursor: pointer; padding-right: 28px; appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2399a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; background-size: 12px 12px; }
+select.tsql-input:hover { border-color: var(--ring, var(--border)); }
+
+.tsql-checkbox { width: 14px; height: 14px; cursor: pointer; }
+.tsql-form-error { margin: 10px 0 0; min-height: 14px; font-size: 11px; color: var(--destructive, #ef4444); }
+.tsql-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .tsql-table-title { font-weight: 600; color: var(--foreground); }
 .tsql-error-line { color: var(--destructive, #ef4444); font-weight: 600; }
-.tsql-error-text { padding: 8px 12px; background: rgba(239, 68, 68, 0.08); color: var(--destructive, #ef4444); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
-.tsql-sql-source { padding: 8px 12px; background: var(--accent, rgba(127,127,127,0.06)); color: var(--muted-foreground); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+.tsql-error-text { padding: 10px 12px; background: rgba(239, 68, 68, 0.08); color: var(--destructive, #ef4444); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+.tsql-sql-source { padding: 10px 12px; background: var(--accent, rgba(127,127,127,0.06)); color: var(--muted-foreground); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+
+/* Narrow-window adaptations. The connection rail collapses into a single
+   compressed row above the workspace; the schema tree also gets tighter. */
+@media (max-width: 720px) {
+  .tsql-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .tsql-conn-rail { border-right: 0; border-bottom: 1px solid var(--border); max-height: 120px; }
+  .tsql-workspace { grid-template-columns: minmax(160px, 200px) minmax(0, 1fr); }
+}
+@media (max-width: 540px) {
+  .tsql-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .tsql-tree { border-right: 0; border-bottom: 1px solid var(--border); max-height: 160px; }
+  .tsql-toolbar { padding: 5px 8px; }
+  .tsql-btn { padding: 4px 8px; }
+}
 `;

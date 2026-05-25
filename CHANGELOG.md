@@ -2,6 +2,31 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.3 (2026-05-25)
+
+Layout, badges, and responsive polish.
+
+- Connection-row badges replaced with stylised MySQL / PostgreSQL /
+  SQLite brand marks (inline SVG, brand-coloured backgrounds). Replaces
+  the `MY` / `PO` / `SQ` text labels.
+- Auto-collapse the host file-explorer sidebar when the SQL Explorer
+  tab opens, via the new `ctx.app.setSidebarVisible(false)` host API.
+  Users can re-open the sidebar manually from the header toggle.
+- Connection dialog: `Database` field marked `(optional)` with a
+  placeholder explaining that an empty value browses all databases the
+  account can see. The schema tree always lists every database the
+  connection has access to.
+- Result + table grid polished: zebra row striping, sticky header
+  shadow, bigger padding, cleaner editable-cell input border, status
+  bar styling.
+- Native dropdown caret + `cursor: pointer` on every `<select>`.
+- Responsive: connection rail and schema tree shrink (and at narrow
+  widths collapse into a horizontal strip above the workspace) so the
+  workbench works on a half-screen pane.
+- Toolbars wrap on narrow widths; buttons gain hover border + smooth
+  transitions.
+- Requires TEDI >= 0.2.26 for `ctx.app.setSidebarVisible`.
+
 ## 0.2.2 (2026-05-25)
 
 Header button + toolbar polish.

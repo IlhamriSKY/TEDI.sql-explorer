@@ -2,6 +2,24 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.5 (2026-05-26)
+
+Dropdowns + brand marks now match the host's Settings dialog style.
+
+- Custom dropdown replaces every native `<select>` in the extension.
+  Visual parity with TEDI Settings DropdownMenu: h-32 outline trigger,
+  ArrowDown01Icon caret that rotates 180 on open, rounded popup
+  rendered into `document.body`, items with `Tick02Icon` for the
+  selected value, click-outside + Escape to close. Same dropdown
+  pattern for Engine / TLS / Mode (in the connection dialog) and
+  Format (in the export dialog).
+- Engine dropdown items each carry their brand mark, so the user sees
+  the MySQL dolphin / PostgreSQL elephant / SQLite feather next to
+  the option label and on the collapsed trigger. The trigger reads as
+  "[brand] MySQL / MariaDB" when collapsed.
+- Brand marks refined: cleaner silhouettes, sharper eye / wave
+  details, brighter on the kind-coloured background.
+
 ## 0.2.4 (2026-05-25)
 
 CRUD audit pass + query editor parity with the host code editor.

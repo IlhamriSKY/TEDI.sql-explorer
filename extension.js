@@ -486,26 +486,32 @@ function renderConnRail() {
  * "Postgres-like" / "SQLite-like" at a glance without shipping the
  * official assets.
  */
+/* Brand marks are stylised abstractions, not exact copies of the
+ * trademarked logos. Trademarks belong to their respective owners; we
+ * use brand-flavoured silhouettes so each connection kind reads as the
+ * right product at a glance without bundling official assets. */
 const KIND_SVG = {
+  // MySQL: dolphin in profile, brand-blue. Curved body + crescent fin +
+  // dotted eye + wave underneath.
   mysql:
     '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M2.2 13.5c2.3-2.1 5-3 7.8-2.7 2.1.2 3.5 1.4 5.2 2.3 1.4.7 2.9 1 4.3.4-.6 1.9-2 3.4-4 4-1.9.5-3.6-.2-5.3-.7-2.2-.7-4.5-1.1-6.8-.5C3 16.8 2.2 15.1 2.2 13.5z"/>' +
-    '<circle cx="17.5" cy="9" r="1.2"/>' +
-    '<path d="M14.6 7.4c.5-1.2 1.5-2 2.7-2.2-.2 1.2-.9 2.2-2.1 2.7" opacity="0.7"/>' +
+    '<path d="M2 14.5c1.8-1.5 4-2.4 6.4-2.4 1.7 0 3.3.5 4.7 1.4 1 .6 2 1.3 3.2 1.5 1.5.2 3-.4 4.1-1.4-.4 1.6-1.4 3-2.8 4-1.4 1-3.2 1.4-4.9 1-1.8-.4-3.4-1.4-5.3-1.7-2-.3-4.1.4-5.4 2-.3-.4-.4-.9-.4-1.4 0-1.1.4-2.1 1-3 .1-.1.2-.2.3-.3l-.9.3z"/>' +
+    '<path d="M14.5 6.2c1.2-.6 2.7-.6 3.8.2-.4.3-.8.4-1.3.4-.8 0-1.5-.4-2-1 .1.1.2.3.3.4-.4 0-.7.1-1 .3l.2-.3z" opacity="0.65"/>' +
+    '<circle cx="18.3" cy="11.5" r="0.9"/>' +
     "</svg>",
+  // PostgreSQL: elephant head (the famous "Slonik") — round head, ear,
+  // trunk curl. Dotted eye for life.
   postgres:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M4 14c0-5 4-9 9-9s7 3 7 7c0 4-2 7-5 7-1 0-2-1-2-2 0-1 1-1.6 2-1.6"/>' +
-    '<path d="M9 8c0 1 .5 2 1.2 2.6"/>' +
-    '<path d="M7 18c-1-2-1-4 0-6"/>' +
-    '<circle cx="14.5" cy="9.5" r=".7" fill="currentColor" stroke="none"/>' +
+    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M12 3c4.3 0 7.6 3.2 8 7.3.2 2.1-.4 4.3-1.8 6-1 1.2-2.5 1.9-4 1.7-1.1-.2-1.9-1.2-1.7-2.3.1-.7.6-1.3 1.3-1.5-.4-.2-.7-.6-.7-1.1 0-.7.6-1.3 1.3-1.3.3 0 .6.1.9.3-.4-.4-.6-.9-.6-1.5 0-1.2 1-2.2 2.2-2.2.2 0 .5 0 .7.1C16.7 6 14.5 4.5 12 4.5 8.4 4.5 5.5 7.4 5.5 11c0 1.8.7 3.4 1.9 4.6.7.6 1 1.6.9 2.5-.2 1.1-1 1.9-2.1 2-.4 0-.7-.1-1-.3 1.5 1.7 3.7 2.7 6 2.7 4.7 0 8.5-3.7 8.7-8.4 0-.4-.1-.7-.2-1.1-.4-2.4-1.9-4.4-4-5.6-.2-.1-.4-.2-.5-.3-1.2-.6-2.6-1-4-1z"/>' +
+    '<circle cx="15.5" cy="9.5" r="0.8" fill="var(--background)"/>' +
     "</svg>",
+  // SQLite: a feather quill — the same "feather + database" metaphor
+  // the SQLite project uses. Cleaner outline + spine.
   sqlite:
     '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M6 3h9l4 4v14H6V3z" opacity="0.85"/>' +
-    '<path d="M15 3v4h4" fill="none" stroke="var(--background)" stroke-width="1.5"/>' +
-    '<ellipse cx="13" cy="14" rx="4.5" ry="1.6" fill="none" stroke="var(--background)" stroke-width="1.2"/>' +
-    '<path d="M8.5 14v2.5c0 .9 2 1.7 4.5 1.7s4.5-.8 4.5-1.7V14" fill="none" stroke="var(--background)" stroke-width="1.2"/>' +
+    '<path d="M21 3c-2.5 0-5 .4-7.3 1.4C11 5.4 8.7 7.1 7.2 9.4c-1 1.6-1.5 3.5-1.4 5.3 0 .6.1 1.2.3 1.7-1.2.7-2.2 1.7-3 2.9-.4.6-.8 1.2-1.1 1.9h2.3c.4-.7.8-1.2 1.4-1.8.9-.9 2-1.6 3.2-2.1 1.3-.5 2.6-.8 4-.9 1.4-.1 2.7 0 4.1.1l-.4-1c-.2-.5-.3-1.1-.3-1.7 0-.7.1-1.4.4-2.1.3-.9.8-1.7 1.4-2.4.6-.7 1.3-1.3 2-1.9V3z"/>' +
+    '<path d="M14 6.5c-.6.3-1.2.7-1.8 1.1-.5.4-1 .9-1.4 1.4" stroke="var(--background)" stroke-width="0.6" fill="none" opacity="0.5"/>' +
     "</svg>",
 };
 
@@ -611,9 +617,9 @@ async function openConnectionDialog(existing) {
   const nameInput = input({ value: form.name, onInput: (v) => (form.name = v) });
   const kindSelect = select(
     [
-      { value: "mysql", label: "MySQL / MariaDB" },
-      { value: "postgres", label: "PostgreSQL" },
-      { value: "sqlite", label: "SQLite" },
+      { value: "mysql", label: "MySQL / MariaDB", icon: "brand:mysql" },
+      { value: "postgres", label: "PostgreSQL", icon: "brand:postgres" },
+      { value: "sqlite", label: "SQLite", icon: "brand:sqlite" },
     ],
     form.kind,
     (v) => {
@@ -807,17 +813,151 @@ function input({ type = "text", value = "", onInput, placeholder, dataField } = 
   return node;
 }
 
+/**
+ * Custom dropdown that mirrors TEDI's Settings DropdownMenu (shadcn /
+ * radix-luma): h-9 outline trigger with ArrowDown01Icon caret, rounded
+ * popup menu rendered into `document.body`, focus-following hover,
+ * Tick02Icon next to the selected item, click-outside + Escape to
+ * close.
+ *
+ * Each option can optionally carry an `icon` field:
+ *   - `"hugeicon:<Name>"` mounts the named HugeIcon via ctx.ui.icon.
+ *   - `"brand:mysql" | "brand:postgres" | "brand:sqlite"` inlines the
+ *     branded SVG from KIND_SVG (same mark the connection rail uses).
+ *
+ * Returns the trigger element. The signature matches the old native-
+ * `<select>` helper so we can drop it in without changing callers.
+ */
 function select(options, current, onChange) {
-  const node = el("select", { class: "tsql-input" });
-  for (const opt of options) {
-    const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
-    if (opt.value === current) o.selected = true;
-    node.appendChild(o);
+  let value = current;
+  let menu = null;
+  let isOpen = false;
+
+  const trigger = el("button", {
+    class: "tsql-select",
+    attrs: {
+      type: "button",
+      "aria-haspopup": "listbox",
+      "aria-expanded": "false",
+    },
+  });
+
+  // Optional left icon mirrors the current selection's icon, so the
+  // trigger reads as "[brand] MySQL" when collapsed.
+  const leftSlot = el("span", { class: "tsql-select-left" });
+  trigger.appendChild(leftSlot);
+
+  const labelSpan = el("span", { class: "tsql-select-label" });
+  trigger.appendChild(labelSpan);
+
+  const caretBox = el("span", { class: "tsql-select-caret" });
+  appendIcon(caretBox, "ArrowDown01Icon", { size: 12, strokeWidth: 2 });
+  trigger.appendChild(caretBox);
+
+  const renderIconInto = (container, iconRef) => {
+    clearChildren(container);
+    if (!iconRef) return;
+    if (iconRef.startsWith("brand:")) {
+      const kind = iconRef.slice("brand:".length);
+      const svg = KIND_SVG[kind];
+      if (svg) {
+        const wrap = el("span", { class: `tsql-conn-kind tsql-kind-${kind}` });
+        wrap.innerHTML = svg;
+        container.appendChild(wrap);
+      }
+      return;
+    }
+    if (iconRef.startsWith("hugeicon:")) {
+      appendIcon(container, iconRef.slice("hugeicon:".length), { size: 14 });
+    }
+  };
+
+  const updateLabel = () => {
+    const current = options.find((o) => o.value === value);
+    labelSpan.textContent = current?.label ?? "";
+    renderIconInto(leftSlot, current?.icon);
+  };
+  updateLabel();
+
+  const onDocMouseDown = (event) => {
+    if (!menu) return;
+    if (menu.contains(event.target) || trigger.contains(event.target)) return;
+    closeMenu();
+  };
+  const onDocKeyDown = (event) => {
+    if (event.key === "Escape" && isOpen) {
+      event.preventDefault();
+      closeMenu();
+    }
+  };
+
+  function closeMenu() {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    isOpen = false;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("mousedown", onDocMouseDown, true);
+    document.removeEventListener("keydown", onDocKeyDown, true);
   }
-  if (onChange) node.addEventListener("change", () => onChange(node.value));
-  return node;
+
+  function openMenu() {
+    if (isOpen) return;
+    const rect = trigger.getBoundingClientRect();
+    menu = el("ul", {
+      class: "tsql-select-menu",
+      attrs: { role: "listbox" },
+    });
+    menu.style.position = "fixed";
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.minWidth = `${Math.max(rect.width, 200)}px`;
+    menu.style.zIndex = "10000";
+
+    for (const opt of options) {
+      const item = el("li", {
+        class: `tsql-select-item${opt.value === value ? " is-selected" : ""}`,
+        attrs: { role: "option", "data-value": opt.value },
+      });
+      const iconBox = el("span", { class: "tsql-select-item-icon" });
+      renderIconInto(iconBox, opt.icon);
+      item.appendChild(iconBox);
+      item.appendChild(el("span", { class: "tsql-select-item-label", text: opt.label }));
+      if (opt.value === value) {
+        const check = el("span", { class: "tsql-select-item-check" });
+        appendIcon(check, "Tick02Icon", { size: 13, strokeWidth: 2 });
+        item.appendChild(check);
+      }
+      item.addEventListener("click", () => {
+        value = opt.value;
+        if (onChange) {
+          try {
+            onChange(opt.value);
+          } catch (err) {
+            ctx?.logger?.error?.("dropdown onChange threw", err);
+          }
+        }
+        updateLabel();
+        closeMenu();
+      });
+      menu.appendChild(item);
+    }
+
+    document.body.appendChild(menu);
+    trigger.setAttribute("aria-expanded", "true");
+    isOpen = true;
+    // Defer listener attach so the click that opened us doesn't immediately close.
+    requestAnimationFrame(() => {
+      document.addEventListener("mousedown", onDocMouseDown, true);
+      document.addEventListener("keydown", onDocKeyDown, true);
+    });
+  }
+
+  trigger.addEventListener("click", () => {
+    if (isOpen) closeMenu();
+    else openMenu();
+  });
+  return trigger;
 }
 
 function checkbox(checked, onChange) {
@@ -2019,8 +2159,29 @@ const STYLES_CSS = `
 .tsql-input { padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; transition: border-color 0.12s ease, box-shadow 0.12s ease; }
 .tsql-input:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
 .tsql-input::placeholder { color: var(--muted-foreground); opacity: 0.6; }
-select.tsql-input { cursor: pointer; padding-right: 28px; appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2399a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; background-size: 12px 12px; }
-select.tsql-input:hover { border-color: var(--ring, var(--border)); }
+/* Custom dropdown — mirrors TEDI Settings DropdownMenu (shadcn /
+   radix-luma): h-9 outline trigger, popup menu rendered into body. */
+.tsql-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; height: 32px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease; min-width: 0; }
+.tsql-select:hover { background: var(--accent, rgba(127,127,127,0.06)); border-color: var(--ring, var(--border)); }
+.tsql-select:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
+.tsql-select-left { display: inline-flex; align-items: center; flex-shrink: 0; }
+.tsql-select-left:empty { display: none; }
+.tsql-select-left .tsql-conn-kind { width: 18px; height: 18px; border-radius: 4px; }
+.tsql-select-left .tsql-conn-kind svg { width: 14px; height: 14px; }
+.tsql-select-label { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsql-select-caret { display: inline-flex; flex-shrink: 0; opacity: 0.7; color: currentColor; transition: transform 0.15s ease; }
+.tsql-select[aria-expanded="true"] .tsql-select-caret { transform: rotate(180deg); }
+
+.tsql-select-menu { list-style: none; margin: 0; padding: 6px; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 14px 32px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.03) inset; max-height: 320px; overflow-y: auto; font-size: 12px; }
+.tsql-select-item { display: flex; align-items: center; gap: 10px; padding: 7px 11px; border-radius: 10px; cursor: pointer; font-weight: 500; color: var(--foreground); user-select: none; transition: background 0.1s ease; }
+.tsql-select-item:hover, .tsql-select-item:focus-visible { background: var(--accent, rgba(127,127,127,0.1)); outline: none; }
+.tsql-select-item-icon { display: inline-flex; align-items: center; flex-shrink: 0; width: 20px; height: 20px; }
+.tsql-select-item-icon:empty { display: none; }
+.tsql-select-item-icon .tsql-conn-kind { width: 20px; height: 20px; border-radius: 4px; }
+.tsql-select-item-icon .tsql-conn-kind svg { width: 14px; height: 14px; }
+.tsql-select-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsql-select-item-check { margin-left: auto; flex-shrink: 0; color: var(--primary, #3b82f6); }
+.tsql-select-item.is-selected { color: var(--foreground); font-weight: 600; }
 
 .tsql-checkbox { width: 14px; height: 14px; cursor: pointer; }
 .tsql-form-error { margin: 10px 0 0; min-height: 14px; font-size: 11px; color: var(--destructive, #ef4444); }

@@ -1,0 +1,58 @@
+[package]
+name = "tedi-sql-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Sidecar SQL gateway for the tedi.sql-explorer extension (MySQL / PostgreSQL / SQLite)"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "tedi-sql-helper"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server. axum 0.7 stable; pulls hyper 1.x + tower 0.5 transitively.
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.6", features = ["cors"] }
+hyper = { version = "1", features = ["server", "http1"] }
+
+# Drivers — sqlx with runtime-tokio + rustls (no system OpenSSL dep).
+# `bigdecimal` and `chrono` opt-in so DECIMAL / DATE-style columns decode
+# without panicking. `json` enables JSON column support on MySQL / PG.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "tls-rustls",
+    "mysql",
+    "postgres",
+    "sqlite",
+    "chrono",
+    "uuid",
+    "json",
+    "bigdecimal",
+] }
+
+# Numeric / date support shared with sqlx feature flags above.
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["serde"] }
+
+# Serialisation + utils.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+base64 = "0.22"
+rand = "0.8"
+hex = "0.4"
+
+# Logging — written to stderr; stdout reserved for the READY line.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

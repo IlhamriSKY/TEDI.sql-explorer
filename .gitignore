@@ -1,0 +1,17 @@
+# Built sidecar binaries land here from CI per (os, arch). Committed in
+# release builds, ignored in source tree so local cargo builds do not
+# pollute git status.
+/sidecar/
+
+# Rust build artefacts
+/sidecar-src/target/
+
+# Release zip
+dist/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

@@ -4,7 +4,7 @@ Companion extension for [TEDI](https://github.com/IlhamriSKY/TEDI) that
 adds a HeidiSQL-style database workbench to the right-panel slot.
 Connect to **MySQL / MariaDB**, **PostgreSQL**, or **SQLite**, browse
 the schema, write multi-statement queries, edit rows inline, and export
-results — all without leaving the editor.
+results, all without leaving the editor.
 
 <p align="center">
   <img src="logo.png" alt="SQL Explorer" width="128" />
@@ -15,7 +15,7 @@ results — all without leaving the editor.
 > release zip and runs as a local subprocess of TEDI. It binds
 > `127.0.0.1` only, generates a fresh 32-byte bearer token on every
 > boot, and is killed when the extension is disabled or uninstalled.
-> The TEDI core does not bundle any database drivers — uninstalling the
+> The TEDI core does not bundle any database drivers; uninstalling the
 > extension removes every one of them with it.
 
 ---
@@ -83,7 +83,7 @@ TEDI webview                                    tedi-sql-helper.exe
 On `activate(ctx)` the extension:
 
 1. Resolves the sidecar binary path from `ctx.installPath` +
-   `ctx.os.platform`/`arch` — the same convention `tedi.screenshot`
+   `ctx.os.platform`/`arch`. Same convention `tedi.screenshot`
    uses.
 2. Spawns it via `shell_bg_spawn_direct` (one process per TEDI window;
    no shell wrapper, the tracked PID is the helper itself).
@@ -102,7 +102,7 @@ The host's permission gates do the rest: every Tauri command the
 extension can call is listed in `manifest.permissions`, and TEDI's
 `isInvokeAllowed` check refuses anything else. The sidecar itself
 rejects every request whose bearer token does not match the per-boot
-value — even from another process on the same machine.
+value, even from another process on the same machine.
 
 ### Security boundary
 
@@ -191,8 +191,8 @@ The sidecar build matrix covers:
 | macOS     | `aarch64-apple-darwin`       |
 | Linux     | `x86_64-unknown-linux-gnu`   |
 
-`runtime-tokio-rustls` keeps the binary free of system OpenSSL deps —
-the sidecar is statically linked except for the platform libc and
+`runtime-tokio-rustls` keeps the binary free of system OpenSSL deps;
+the sidecar is statically linked except for the platform libc, and
 SQLite is vendored.
 
 ---
@@ -220,7 +220,7 @@ After install, watch TEDI's dev-tools console (`Ctrl+Shift+I`) for
 `[ext:tedi.sql-explorer]` log lines (sidecar boot, READY line, query
 errors).
 
-Cut a release with a `vX.Y.Z` tag — the bundled
+Cut a release with a `vX.Y.Z` tag. The bundled
 [`.github/workflows/release.yml`](.github/workflows/release.yml) asserts
 the tag matches `manifest.version`, builds the sidecar for every
 matrix entry above, zips

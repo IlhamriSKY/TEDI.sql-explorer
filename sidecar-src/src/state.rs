@@ -1,4 +1,4 @@
-//! Shared state — bearer token + the live connection registry.
+//! Shared state: bearer token + the live connection registry.
 //!
 //! Each `/connect` opens a sqlx pool keyed by the caller-supplied connection
 //! id and parks it in `connections`. `/disconnect` removes the entry. The

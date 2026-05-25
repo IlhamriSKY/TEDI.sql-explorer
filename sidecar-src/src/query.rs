@@ -78,7 +78,7 @@ pub enum StatementKind {
     Unknown,
 }
 
-/// Naive statement splitter — respects single / double / backtick quotes,
+/// Naive statement splitter. Respects single / double / backtick quotes,
 /// `--` line comments, and `/* ... */` block comments. Good enough for
 /// "user-typed query editor" semantics; not a full SQL parser.
 pub fn split_statements(sql: &str) -> Vec<String> {
@@ -265,7 +265,7 @@ pub async fn execute(
         {
             out.push(StatementResult::Error {
                 sql: stmt,
-                error: "connection is read-only — enable writes in the connection settings".into(),
+                error: "connection is read-only. Enable writes in the connection settings".into(),
                 elapsed_ms: 0,
             });
             continue;

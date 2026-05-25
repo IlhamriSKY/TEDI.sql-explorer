@@ -1,4 +1,4 @@
-// SQL Explorer — HeidiSQL-style database viewer for MySQL / PostgreSQL /
+// SQL Explorer. HeidiSQL-style database viewer for MySQL / PostgreSQL /
 // SQLite, backed by the `tedi-sql-helper` native sidecar.
 //
 // Lifecycle
@@ -30,7 +30,7 @@ const CMD_RUN = "tedi.sql-explorer.runQuery";
 const READY_TIMEOUT_MS = 12_000;
 const READY_POLL_MS = 80;
 
-// Sidecar binary directory layout — mirrors tedi.screenshot.
+// Sidecar binary directory layout; mirrors tedi.screenshot.
 function platformDir(os) {
   const arch = os?.arch || "x86_64";
   if (os?.platform === "windows") return arch === "aarch64" ? "windows-aarch64" : "windows-x86_64";
@@ -68,8 +68,8 @@ const state = {
  * @property {string} sql
  * @property {any | null} result
  * @property {{ database: string, schema: string, table: string, kind: string } | null} activeTable
- * @property {any | null} tableSnapshot — server response from /table-rows
- * @property {string | null} requestId — in-flight query id
+ * @property {any | null} tableSnapshot server response from /table-rows
+ * @property {string | null} requestId in-flight query id
  */
 
 // ----------------------------- Entry points ----------------------------------
@@ -206,7 +206,7 @@ async function bootSidecar() {
 }
 
 function extractReady(buf) {
-  // Strict prefix match — anything before the keyword is throwaway stderr.
+  // Strict prefix match. Anything before the keyword is throwaway stderr.
   const idx = buf.indexOf("READY ");
   if (idx < 0) return null;
   const nl = buf.indexOf("\n", idx);
@@ -450,7 +450,7 @@ function connSubtitle(c) {
 // ----------------------------- Connection dialog -----------------------------
 
 function openConnectionDialog(existing) {
-  // Modal overlay anchored inside the panel — keeps the dialog scoped.
+  // Modal overlay anchored inside the panel; keeps the dialog scoped.
   const overlay = el("div", { class: "tsql-overlay" });
   const dialog = el("div", { class: "tsql-dialog" });
   const isEdit = Boolean(existing?.id);
@@ -723,7 +723,7 @@ async function deleteConnection(id) {
   try {
     await fetchJson("/disconnect", { method: "POST", body: { id } });
   } catch {
-    /* silent — pool may not be open */
+    /* silent: pool may not be open */
   }
   if (state.active === id) state.active = null;
   delete state.sessions[id];
@@ -1326,7 +1326,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
   if (!snap) return;
   const pks = await ensurePkColumns(session);
   if (pks.length === 0) {
-    safeToast("Cannot edit — table has no primary key.", "warning");
+    safeToast("Cannot edit: table has no primary key.", "warning");
     return;
   }
   const original = snap.rows[rowIdx][colIdx];
@@ -1350,7 +1350,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
     for (const pk of pks) {
       const idx = snap.columns.indexOf(pk);
       if (idx < 0) {
-        safeToast(`Primary key ${pk} not in current grid — refresh first.`, "warning");
+        safeToast(`Primary key ${pk} not in current grid; refresh first.`, "warning");
         td.replaceChildren(renderCellContent(original));
         return;
       }
@@ -1426,14 +1426,14 @@ async function deleteRowFromGrid(session, rowIdx) {
   if (!snap) return;
   const pks = await ensurePkColumns(session);
   if (pks.length === 0) {
-    safeToast("Cannot delete — table has no primary key.", "warning");
+    safeToast("Cannot delete: table has no primary key.", "warning");
     return;
   }
   const pkMap = {};
   for (const pk of pks) {
     const idx = snap.columns.indexOf(pk);
     if (idx < 0) {
-      safeToast(`Primary key ${pk} not in grid — refresh first.`, "warning");
+      safeToast(`Primary key ${pk} not in grid; refresh first.`, "warning");
       return;
     }
     pkMap[pk] = snap.rows[rowIdx][idx];
@@ -1529,7 +1529,7 @@ async function openInsertDialog(session) {
   panelRoot.appendChild(overlay);
   // Hint PK columns even when the user couldn't read them yet
   if (pks.length === 0) {
-    safeToast("Table has no primary key — generated columns must be filled manually.", "info");
+    safeToast("Table has no primary key; generated columns must be filled manually.", "info");
   }
 }
 
@@ -1715,7 +1715,7 @@ async function restartSidecarFlow() {
 //
 // Single <style> block; class names all start with `tsql-` so they don't
 // collide with TEDI host styles. Colours pull from TEDI's design tokens via
-// CSS variables — the panel inherits dark/light themes automatically.
+// CSS variables, so the panel inherits dark/light themes automatically.
 
 const STYLE_ID = "tsql-styles";
 function injectStyles() {

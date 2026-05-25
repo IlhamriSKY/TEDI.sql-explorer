@@ -1,4 +1,4 @@
-//! tedi-sql-helper — sidecar SQL gateway for the tedi.sql-explorer
+//! tedi-sql-helper. Sidecar SQL gateway for the tedi.sql-explorer
 //! extension. Speaks HTTP+JSON on `127.0.0.1` with a per-boot bearer token.
 //!
 //! Usage:
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // CORS: webview origin varies across Tauri platforms (tauri://localhost,
     // http://tauri.localhost, https://tauri.localhost). The bearer token is
-    // the real auth — CORS just controls which origin the browser allows to
+    // the real auth. CORS just controls which origin the browser allows to
     // read responses. Use a permissive policy and lean on the token.
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -417,7 +417,7 @@ async fn handle_table_update(
     let conn = require_connection(&state, &req.conn).await?;
     if !conn.config.allow_writes {
         return Err(AppError::BadRequest(
-            "connection is read-only — toggle Allow Writes to mutate rows".into(),
+            "connection is read-only. Toggle Allow Writes to mutate rows".into(),
         ));
     }
     Ok(Json(update_row(&conn.backend, &req).await?))
@@ -430,7 +430,7 @@ async fn handle_table_insert(
     let conn = require_connection(&state, &req.conn).await?;
     if !conn.config.allow_writes {
         return Err(AppError::BadRequest(
-            "connection is read-only — toggle Allow Writes to insert rows".into(),
+            "connection is read-only. Toggle Allow Writes to insert rows".into(),
         ));
     }
     Ok(Json(insert_row(&conn.backend, &req).await?))
@@ -443,7 +443,7 @@ async fn handle_table_delete(
     let conn = require_connection(&state, &req.conn).await?;
     if !conn.config.allow_writes {
         return Err(AppError::BadRequest(
-            "connection is read-only — toggle Allow Writes to delete rows".into(),
+            "connection is read-only. Toggle Allow Writes to delete rows".into(),
         ));
     }
     Ok(Json(delete_row(&conn.backend, &req).await?))

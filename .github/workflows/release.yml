@@ -8,7 +8,7 @@ name: Release
 #   4. zips the whole tree, uploads to the GitHub release that TEDI's
 #      installer reads from `releases/latest`.
 #
-# Mirrors the tedi.screenshot pipeline. No system-level deps on Linux —
+# Mirrors the tedi.screenshot pipeline. No system-level deps on Linux:
 # sqlx with `runtime-tokio-rustls` does not pull OpenSSL, and the SQLite
 # build is bundled (sqlx default features include sqlite + libsqlite3-sys
 # vendored).

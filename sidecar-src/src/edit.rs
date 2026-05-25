@@ -1,4 +1,4 @@
-//! Table-grid edit endpoints — paged SELECT + INSERT / UPDATE / DELETE by PK.
+//! Table-grid edit endpoints: paged SELECT + INSERT / UPDATE / DELETE by PK.
 //!
 //! All identifiers are validated against the strict allow-list in
 //! `schema::is_safe_ident` before being inlined. Values flow through bound

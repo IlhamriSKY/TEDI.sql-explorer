@@ -2,6 +2,17 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.18 (2026-05-26)
+
+- Toolbar buttons (Stop, Export, Row, Reload, Close, etc.) no longer
+  paint a visible border at rest. Border is `1px transparent` so the
+  hover bg lifts to --muted as a clean kotak without an outline ring,
+  matching the host's <Button variant="ghost"> chrome and the existing
+  icon-button behaviour. The Run action keeps its --primary fill, and
+  every button still shows --ring on focus-visible. Background also
+  drops to transparent so the toolbar's card tint shows through at
+  rest instead of fighting it with a slightly-different --background.
+
 ## 0.2.17 (2026-05-26)
 
 Free-form queries now resolve unqualified tables, splitter matches the

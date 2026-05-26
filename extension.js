@@ -2775,10 +2775,13 @@ const STYLES_CSS = `
 
 .tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; }
-/* Buttons match the host's <Button variant="outline" size="sm"> chrome:
-   square corners (via --radius), 28 px height, --border outline, --muted
-   hover fill, --ring focus border. .is-primary swaps to --primary/--primary-foreground. */
-.tsql-btn { box-sizing: border-box; padding: 0 10px; height: 28px; border: 1px solid var(--border); border-radius: var(--radius, 0); background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; line-height: 1; outline: none; transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
+/* Buttons match the host's <Button variant="ghost"> chrome: 1 px
+   transparent border at rest so the hover bg paints as a clean box
+   without an outline ring, only --ring shows on focus-visible.
+   .is-primary swaps to --primary/--primary-foreground for the Run
+   action. Stays bg-transparent so the toolbar's card tint shows
+   through; hover lifts to --muted. */
+.tsql-btn { box-sizing: border-box; padding: 0 10px; height: 28px; border: 1px solid transparent; border-radius: var(--radius, 0); background: transparent; color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; line-height: 1; outline: none; transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
 .tsql-btn:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); color: var(--foreground); }
 .tsql-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 .tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }

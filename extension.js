@@ -470,22 +470,88 @@ function iconButton(iconName, title, onClick) {
 }
 
 /**
- * Autocomplete source for the query editor. Walks the per-session schema
- * cache (populated by `loadTables` and `loadTableRows`) and returns every
- * table + column whose name starts with `prefix` (case-insensitive).
+ * SQL syntax dictionaries fed into the autocomplete source. Split into
+ * keywords / functions / types / engine-specific so each can be tagged
+ * with the right CodeMirror completion `type` (controls the leading
+ * icon glyph) and boost (controls vertical order in the popup).
  *
- * Tables float to the top via boost so the first match in `SELECT ... FROM `
- * is the table the user is most likely after; columns sort after with the
- * parent table surfaced in `detail` so users picking between same-named
- * columns (e.g. `id` in two tables) see which is which.
+ * Labels are uppercase by convention; CodeMirror's prefix matcher is
+ * case-insensitive against the user-typed word, so a user typing "se"
+ * still resolves to "SELECT". The inserted text is the uppercase form
+ * which is the usual house style in SQL editors.
+ */
+const SQL_KEYWORDS_COMMON = [
+  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
+  "DELETE", "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS",
+  "ON", "USING", "AS", "AND", "OR", "NOT", "NULL", "IS", "IN", "BETWEEN",
+  "LIKE", "ORDER", "BY", "GROUP", "HAVING", "LIMIT", "OFFSET", "DISTINCT",
+  "UNION", "ALL", "EXCEPT", "INTERSECT", "EXISTS", "CREATE", "TABLE",
+  "INDEX", "VIEW", "SCHEMA", "DATABASE", "DROP", "ALTER", "ADD", "COLUMN",
+  "RENAME", "TO", "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "UNIQUE",
+  "DEFAULT", "CONSTRAINT", "CHECK", "IF", "ELSE", "ELSIF", "CASE", "WHEN",
+  "THEN", "END", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION", "SAVEPOINT",
+  "WITH", "RECURSIVE", "RETURNING", "NATURAL", "TRUE", "FALSE", "ASC",
+  "DESC", "CASCADE", "RESTRICT", "GRANT", "REVOKE", "EXPLAIN", "ANALYZE",
+  "SHOW", "DESCRIBE", "TRUNCATE", "REPLACE", "MERGE",
+];
+const SQL_FUNCTIONS_COMMON = [
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF", "CAST",
+  "CONVERT", "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME",
+  "DATE", "DATETIME", "TIME", "EXTRACT", "CONCAT", "SUBSTRING", "SUBSTR",
+  "LENGTH", "CHAR_LENGTH", "TRIM", "LTRIM", "RTRIM", "UPPER", "LOWER",
+  "REPLACE", "ROUND", "FLOOR", "CEIL", "CEILING", "ABS", "MOD", "POWER",
+  "SQRT", "RANDOM", "RAND", "GREATEST", "LEAST", "ROW_NUMBER", "RANK",
+  "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "OVER",
+  "PARTITION",
+];
+const SQL_TYPES_COMMON = [
+  "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "FLOAT", "DOUBLE",
+  "DECIMAL", "NUMERIC", "REAL", "VARCHAR", "CHAR", "TEXT", "LONGTEXT",
+  "MEDIUMTEXT", "BLOB", "BINARY", "VARBINARY", "DATE", "DATETIME",
+  "TIMESTAMP", "TIME", "YEAR", "BOOLEAN", "BOOL", "JSON",
+];
+const SQL_KEYWORDS_BY_ENGINE = {
+  mysql: [
+    "AUTO_INCREMENT", "UNSIGNED", "ZEROFILL", "ENGINE", "CHARSET", "COLLATE",
+    "MEDIUMINT", "LONGBLOB", "MEDIUMBLOB", "TINYBLOB", "ENUM", "DUAL", "USE",
+    "LOCK", "UNLOCK", "DELIMITER", "STRAIGHT_JOIN", "STORAGE", "MEMORY",
+    "INNODB", "MYISAM",
+  ],
+  postgres: [
+    "SERIAL", "BIGSERIAL", "SMALLSERIAL", "JSONB", "UUID", "ILIKE", "ARRAY",
+    "CONFLICT", "INTERVAL", "SIMILAR", "LATERAL", "MATERIALIZED", "FILTER",
+    "WINDOW", "TABLESAMPLE", "GENERATED", "ALWAYS", "IDENTITY", "STORED",
+  ],
+  sqlite: [
+    "AUTOINCREMENT", "ROWID", "PRAGMA", "ATTACH", "DETACH", "VACUUM",
+    "GLOB", "INDEXED", "ABORT", "FAIL", "IGNORE",
+  ],
+};
+const SQL_FUNCTIONS_BY_ENGINE = {
+  mysql: ["DATE_ADD", "DATE_SUB", "DATEDIFF", "TIMESTAMPDIFF", "IFNULL", "IF", "FIND_IN_SET", "GROUP_CONCAT", "JSON_EXTRACT", "JSON_OBJECT", "JSON_ARRAY"],
+  postgres: ["TO_CHAR", "TO_DATE", "TO_TIMESTAMP", "AGE", "DATE_TRUNC", "DATE_PART", "STRING_AGG", "ARRAY_AGG", "JSONB_BUILD_OBJECT", "JSONB_AGG"],
+  sqlite: ["IFNULL", "IIF", "DATETIME", "STRFTIME", "JULIANDAY", "JSON", "JSON_EXTRACT"],
+};
+
+/**
+ * Autocomplete source for the query editor. Returns three buckets:
+ *  - schema cache entries (tables + columns) populated by `loadTables`
+ *    and `loadTableRows` as the user navigates the tree
+ *  - SQL syntax keywords / functions / data types so the editor stays
+ *    useful before any table has been opened
+ *  - engine-specific syntax for MySQL / PostgreSQL / SQLite, pulled
+ *    from the active session's connection kind
+ *
+ * Boost ordering (higher = closer to top): tables 12, keywords 10,
+ * functions 8, columns 5, types 3. Tables outrank keywords because the
+ * common case after `FROM ` is a table name; columns sit below so they
+ * surface mainly when the user has typed a column-ish prefix.
  *
  * Identical labels collapse (e.g. MySQL where db == schema, the same
  * table can appear as `db.db.table` and `db.table`). Dedup is by label
  * + type so a table and a column sharing a name both stay visible.
  */
 function buildSchemaCompletions(session, prefix) {
-  const cache = session?.schemaCache;
-  if (!cache || cache.size === 0) return [];
   const needle = (prefix || "").toLowerCase();
   const out = [];
   const seen = new Set();
@@ -494,30 +560,57 @@ function buildSchemaCompletions(session, prefix) {
     seen.add(key);
     out.push(item);
   };
-  for (const entry of cache.values()) {
-    const tableName = entry.table;
-    if (tableName && (!needle || tableName.toLowerCase().startsWith(needle))) {
-      const qualifier =
-        entry.database === entry.schema
-          ? entry.database
-          : `${entry.database}.${entry.schema}`;
-      push(`t:${tableName}`, {
-        label: tableName,
-        detail: qualifier,
-        type: entry.kind === "view" ? "interface" : "type",
-        boost: 10,
-      });
-    }
-    for (const col of entry.columns) {
-      if (!needle || col.toLowerCase().startsWith(needle)) {
-        push(`c:${col}:${tableName}`, {
-          label: col,
-          detail: tableName,
-          type: "property",
-          boost: 0,
+  const matches = (label) => !needle || label.toLowerCase().startsWith(needle);
+
+  // Schema cache: tables + columns
+  const cache = session?.schemaCache;
+  if (cache && cache.size > 0) {
+    for (const entry of cache.values()) {
+      const tableName = entry.table;
+      if (tableName && matches(tableName)) {
+        const qualifier =
+          entry.database === entry.schema
+            ? entry.database
+            : `${entry.database}.${entry.schema}`;
+        push(`t:${tableName}`, {
+          label: tableName,
+          detail: qualifier,
+          type: entry.kind === "view" ? "interface" : "class",
+          boost: 12,
         });
       }
+      for (const col of entry.columns) {
+        if (matches(col)) {
+          push(`c:${col}:${tableName}`, {
+            label: col,
+            detail: tableName,
+            type: "property",
+            boost: 5,
+          });
+        }
+      }
     }
+  }
+
+  // SQL syntax: keywords, functions, types. Always available so the
+  // editor offers help before the schema cache has anything.
+  const connKind = state.connections.find((c) => c.id === session?.connId)?.kind;
+  const engineKeywords = SQL_KEYWORDS_BY_ENGINE[connKind] ?? [];
+  const engineFunctions = SQL_FUNCTIONS_BY_ENGINE[connKind] ?? [];
+  for (const kw of SQL_KEYWORDS_COMMON) {
+    if (matches(kw)) push(`k:${kw}`, { label: kw, detail: "keyword", type: "keyword", boost: 10 });
+  }
+  for (const kw of engineKeywords) {
+    if (matches(kw)) push(`k:${kw}`, { label: kw, detail: `${connKind} keyword`, type: "keyword", boost: 10 });
+  }
+  for (const fn of SQL_FUNCTIONS_COMMON) {
+    if (matches(fn)) push(`f:${fn}`, { label: fn, detail: "function", type: "function", boost: 8 });
+  }
+  for (const fn of engineFunctions) {
+    if (matches(fn)) push(`f:${fn}`, { label: fn, detail: `${connKind} function`, type: "function", boost: 8 });
+  }
+  for (const ty of SQL_TYPES_COMMON) {
+    if (matches(ty)) push(`y:${ty}`, { label: ty, detail: "type", type: "type", boost: 3 });
   }
   return out;
 }
@@ -1713,14 +1806,18 @@ function renderEditorAndResults(session) {
       role: "separator",
       "aria-orientation": "horizontal",
       "aria-label": "Resize query editor",
+      tabindex: "0",
     },
   });
   wrap.appendChild(splitter);
   if (session.editorHeightPx) {
     wrap.style.setProperty("--tsql-editor-h", `${session.editorHeightPx}px`);
   }
-  splitter.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
+  // Single pointer-event drag handler covers mouse + touch + pen so the
+  // splitter works on any input. clamps editor between minEditor and the
+  // available height minus minResults so neither pane vanishes.
+  splitter.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
     const mainRect = wrap.getBoundingClientRect();
     const toolbarH = wrap.querySelector(".tsql-toolbar")?.offsetHeight ?? 0;
     const splitterH = splitter.offsetHeight;
@@ -1737,14 +1834,29 @@ function renderEditorAndResults(session) {
       splitter.classList.remove("is-dragging");
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      try { splitter.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
     };
     splitter.classList.add("is-dragging");
     document.body.style.cursor = "ns-resize";
     document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    try { splitter.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    e.preventDefault();
+  });
+  // Keyboard nudge: Up/Down shrinks/grows the editor by 16 px so users
+  // who can't reach the 6 px hit area (e.g. trackpad) can still resize.
+  splitter.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    const cur = parseFloat(getComputedStyle(wrap).getPropertyValue("--tsql-editor-h")) || wrap.querySelector(".tsql-editor")?.offsetHeight || 0;
+    const step = e.key === "ArrowUp" ? -16 : 16;
+    const next = Math.max(80, cur + step);
+    wrap.style.setProperty("--tsql-editor-h", `${next}px`);
+    session.editorHeightPx = next;
     e.preventDefault();
   });
 
@@ -2580,8 +2692,9 @@ const STYLES_CSS = `
 .tsql-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); user-select: none; }
 .tsql-title { font-weight: 600; font-size: 12px; letter-spacing: 0.02em; }
 .tsql-header-actions { display: flex; gap: 4px; }
-.tsql-icon-btn { width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: background 0.12s ease, color 0.12s ease; }
-.tsql-icon-btn:hover { background: var(--accent, rgba(127,127,127,0.12)); border-color: var(--border); color: var(--foreground); }
+.tsql-icon-btn { width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: var(--radius, 0); background: transparent; color: var(--muted-foreground); cursor: pointer; line-height: 1; display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease; }
+.tsql-icon-btn:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
+.tsql-icon-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 
 /* Responsive 2-pane shell: connection rail + workspace. The rail shrinks
    on narrow windows; below 720 px the connection list collapses into a
@@ -2591,15 +2704,15 @@ const STYLES_CSS = `
 /* Text-only rail row. Name + subtitle on the left, two action buttons
    on the right. No brand icon column — engine kind reads from the
    subtitle so the list stays compact and matches TEDI's chrome. */
-.tsql-conn-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px 20px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
-.tsql-conn-row:hover { background: var(--accent, rgba(127,127,127,0.06)); }
-.tsql-conn-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); border-left-color: var(--primary, #3b82f6); }
+.tsql-conn-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px 20px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0; }
+.tsql-conn-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.06))); }
+.tsql-conn-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); border-left-color: var(--primary, #3b82f6); }
 
 .tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; line-height: 1.25; }
 .tsql-conn-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-conn-host { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
-.tsql-row-action:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
+.tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: var(--radius, 0); display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
+.tsql-row-action:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
 
 /* Workspace: schema tree (auto-shrinking) + editor / results column. */
 .tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
@@ -2607,28 +2720,33 @@ const STYLES_CSS = `
 /* Sticky head holds the "Schema" subheader + search input. Pinning the
    wrapper (not the children individually) keeps the input's horizontal
    margin gutters opaque so rows scrolling under it don't show through. */
-.tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 4px; }
+.tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 6px; }
 .tsql-tree-head .tsql-subheader { border-bottom: 0; }
 .tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); background: var(--card, var(--background)); gap: 8px; }
-.tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
-.tsql-tree-search:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
+.tsql-tree-search { display: block; box-sizing: border-box; width: 100%; margin: 0; padding: 4px 26px 4px 10px; border: 1px solid transparent; border-radius: var(--radius, 0); background: color-mix(in srgb, var(--input) 50%, transparent); color: var(--foreground); font-size: 11px; font-family: inherit; height: 28px; line-height: 1; outline: none; transition: border-color 0.12s ease, background-color 0.12s ease; }
+.tsql-tree-search:hover { background: color-mix(in srgb, var(--input) 60%, transparent); }
+.tsql-tree-search:focus, .tsql-tree-search:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); background: color-mix(in srgb, var(--input) 60%, transparent); box-shadow: none; }
 .tsql-tree-search::placeholder { color: var(--muted-foreground); opacity: 0.7; }
 /* Search input wrapper + HugeIcon clear (X) button. Replaces the native
    type=search browser X so it paints with the same currentColor + hover
-   bg as the rest of the workbench icon row. */
-.tsql-search-wrap { position: relative; }
-.tsql-search-wrap--tree { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; }
-.tsql-search-wrap--tree > .tsql-tree-search { width: 100%; margin: 0; padding-right: 22px; }
-.tsql-search-wrap--grid { display: inline-flex; align-items: center; width: 160px; }
-.tsql-search-wrap--grid > .tsql-input.tsql-grid-search { width: 100%; padding-right: 22px; }
-.tsql-search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; display: none; align-items: center; justify-content: center; border-radius: 4px; transition: background 0.12s ease, color 0.12s ease; }
+   bg as the rest of the workbench icon row. The wrap is always
+   `position: relative` so the absolutely-positioned X stays anchored
+   to the input's right edge regardless of variant. */
+.tsql-search-wrap { position: relative; display: block; box-sizing: border-box; }
+.tsql-search-wrap--tree { width: calc(100% - 16px); margin: 6px 8px 0; }
+.tsql-search-wrap--grid { display: inline-flex; align-items: center; width: 160px; vertical-align: middle; }
+.tsql-search-wrap--grid > .tsql-input.tsql-grid-search { width: 100%; padding-right: 26px; }
+.tsql-search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; margin: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; display: none; align-items: center; justify-content: center; border-radius: var(--radius, 0); box-sizing: border-box; flex: 0 0 auto; z-index: 1; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-search-clear.is-visible { display: inline-flex; }
-.tsql-search-clear:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
-.tsql-tree-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; list-style: none; margin: 0; padding: 4px 0; min-height: 0; }
+.tsql-search-clear:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
+.tsql-search-clear > svg, .tsql-search-clear > * { display: block; flex: 0 0 auto; pointer-events: none; }
+.tsql-tree-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; list-style: none; margin: 0; padding: 0 0 4px; min-height: 0; }
 .tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tsql-tree-node { padding: 0; }
-.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: 4px; }
-.tsql-tree-row:hover { background: var(--accent, rgba(127,127,127,0.08)); }
+.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: var(--radius, 0); outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
+.tsql-tree-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); }
+.tsql-tree-row:focus-visible { background: var(--accent, rgba(127,127,127,0.12)); }
+.tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); }
 .tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }
 .tsql-caret.is-open { transform: rotate(90deg); }
 .tsql-caret-empty { visibility: hidden; }
@@ -2641,11 +2759,16 @@ const STYLES_CSS = `
 
 .tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; }
-.tsql-btn { padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; line-height: 1; transition: background 0.12s ease, border-color 0.12s ease; }
-.tsql-btn:hover:not([disabled]) { background: var(--accent, rgba(127,127,127,0.08)); border-color: var(--ring, var(--border)); }
+/* Buttons match the host's <Button variant="outline" size="sm"> chrome:
+   square corners (via --radius), 28 px height, --border outline, --muted
+   hover fill, --ring focus border. .is-primary swaps to --primary/--primary-foreground. */
+.tsql-btn { box-sizing: border-box; padding: 0 10px; height: 28px; border: 1px solid var(--border); border-radius: var(--radius, 0); background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; line-height: 1; outline: none; transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
+.tsql-btn:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); color: var(--foreground); }
+.tsql-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 .tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
-.tsql-btn.is-primary:hover:not([disabled]) { filter: brightness(1.1); }
+.tsql-btn.is-primary:hover:not([disabled]) { background: color-mix(in srgb, var(--primary, #3b82f6) 80%, transparent); }
+.tsql-btn.is-primary:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 
 /* Code-editor container: hosts a CodeMirror EditorView mounted by
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
@@ -2657,10 +2780,10 @@ const STYLES_CSS = `
    parent .tsql-main, which flex-basis: var(...) flows into. 6px hit area
    with a thin centred indicator that only paints on hover / drag, so the
    splitter is invisible at rest but obviously interactive on approach. */
-.tsql-splitter { flex: 0 0 6px; cursor: ns-resize; background: transparent; position: relative; user-select: none; }
+.tsql-splitter { flex: 0 0 6px; cursor: ns-resize; background: transparent; position: relative; user-select: none; touch-action: none; outline: none; }
 .tsql-splitter::before { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 2px; background: transparent; border-radius: 1px; transition: background 0.12s ease; }
-.tsql-splitter:hover, .tsql-splitter.is-dragging { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
-.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before { background: var(--muted-foreground); }
+.tsql-splitter:hover, .tsql-splitter.is-dragging, .tsql-splitter:focus-visible { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--muted-foreground); }
 .tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
@@ -2672,7 +2795,7 @@ const STYLES_CSS = `
 /* Result / table grid — sticky header with subtle shadow, zebra rows,
    no horizontal overflow surprise. */
 .tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
-.tsql-grid-wrap.is-editable { border-top: 1px solid var(--border); }
+.tsql-grid-wrap.is-editable { border-top: 0; }
 .tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
 .tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; box-shadow: 0 1px 0 0 var(--border); user-select: none; }
 /* Sortable header: click cycles unset -> asc -> desc -> unset. The
@@ -2685,14 +2808,11 @@ const STYLES_CSS = `
 .tsql-grid-th.is-sort-asc .tsql-sort-arrow, .tsql-grid-th.is-sort-desc .tsql-sort-arrow { color: var(--foreground); }
 /* Toolbar search + column-filter controls. Sit ahead of the action
    buttons; widths are compact so the toolbar stays single-row on
-   typical widths and wraps gracefully when narrow. */
-.tsql-input.tsql-grid-search { width: 160px; padding: 4px 8px; font-size: 11px; height: 26px; }
-.tsql-input.tsql-grid-search:focus { border-color: var(--foreground); box-shadow: none; }
-/* Column filter uses the shared .tsql-select chrome; the .tsql-grid-colfilter
-   class trims the default 36px Settings height down to the 26px toolbar
-   row size and caps the width so wide column names don't push the toolbar
-   into a wrap. */
-.tsql-select.tsql-grid-colfilter { height: 26px; min-height: 26px; padding: 0 8px; font-size: 11px; max-width: 160px; min-width: 96px; }
+   typical widths and wraps gracefully when narrow. The 28 px height
+   matches the rest of the form chrome so search + filter + Row/Reload/
+   Close buttons all sit on the same baseline. */
+.tsql-input.tsql-grid-search { width: 100%; padding: 4px 26px 4px 10px; font-size: 11px; height: 28px; line-height: 1; box-sizing: border-box; }
+.tsql-select.tsql-grid-colfilter { height: 28px; min-height: 28px; padding: 0 10px; font-size: 11px; max-width: 160px; min-width: 96px; }
 .tsql-select.tsql-grid-colfilter .tsql-select-label { font-weight: normal; }
 .tsql-grid tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 /* Zebra stripes use foreground tint at low alpha so dark/light themes
@@ -2713,56 +2833,68 @@ const STYLES_CSS = `
 .tsql-pager-label { font-size: 11px; color: var(--muted-foreground); min-width: 80px; text-align: center; }
 .tsql-empty { padding: 18px 14px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
 
-/* Modal dialog. */
+/* Modal dialog - matches the host's AlertDialog/Dialog chrome: bg-popover,
+   1 px border, host --radius corners, deep shadow. */
 .tsql-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2000; backdrop-filter: blur(2px); }
-.tsql-dialog { background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
+.tsql-dialog { background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: var(--radius, 0); padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
 .tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
 
 /* Connection editor - docked side panel anchored to the right of the
    workbench. No overlay backdrop (rail/tree stay interactive); the
-   title bar is a drag handle. Visuals mirror the standalone Settings
-   window: brand --primary accent outline + 0.5rem corners + faded
-   card-tinted header. The border uses 'outline' + negative offset (not
+   title bar is a drag handle. Mirrors the standalone Settings window:
+   brand --primary accent outline + faded card-tinted header + host
+   --radius corners. The border uses 'outline' + negative offset (not
    'border') so it survives WebView2 edge clipping on Windows resize,
    matching the trick '#settings-root' uses in globals.css. */
-.tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--background); color: var(--popover-foreground, var(--foreground)); border-radius: 0.5rem; outline: 1px solid var(--primary); outline-offset: -1px; box-shadow: 0 18px 40px rgba(0,0,0,0.32); overflow: hidden; }
+.tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--background); color: var(--popover-foreground, var(--foreground)); border-radius: var(--radius, 0); outline: 1px solid var(--primary); outline-offset: -1px; box-shadow: 0 18px 40px rgba(0,0,0,0.32); overflow: hidden; }
 .tsql-conn-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); background: color-mix(in srgb, var(--card, var(--background)) 60%, transparent); cursor: grab; user-select: none; touch-action: none; }
 .tsql-conn-modal-header:active { cursor: grabbing; }
 .tsql-conn-modal-title { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--foreground); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tsql-conn-modal-close { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.12s ease, color 0.12s ease; flex-shrink: 0; }
-.tsql-conn-modal-close:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
+.tsql-conn-modal-close { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; background: transparent; color: var(--muted-foreground); border-radius: var(--radius, 0); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease; flex-shrink: 0; }
+.tsql-conn-modal-close:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
+.tsql-conn-modal-close:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 .tsql-conn-modal-body { padding: 14px 16px 16px; overflow-y: auto; min-height: 0; }
 .tsql-conn-modal-body .tsql-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* Compact confirm modal — title + single message line + actions. Mirrors
+/* Inputs inside the connection modal scale up to 32 px so the form feels
+   closer to the host's 36 px default without breaking the workbench's
+   compact toolbar. */
+.tsql-conn-modal-body .tsql-input, .tsql-conn-modal-body .tsql-select { height: 32px; min-height: 32px; padding: 4px 12px; font-size: 12px; }
+.tsql-conn-modal-body .tsql-btn { height: 32px; padding: 0 14px; font-size: 12px; }
+/* Compact confirm modal: title + single message line + actions. Mirrors
    the host's AlertDialog (default + outline buttons, no destructive red),
    so a "Delete connection?" prompt reads the same as the SSH manager. */
 .tsql-dialog-confirm { min-width: 320px; max-width: 420px; padding: 18px 20px 16px; }
 .tsql-dialog-confirm .tsql-dialog-title { margin-bottom: 8px; }
 .tsql-dialog-message { margin: 0 0 16px; font-size: 12px; color: var(--muted-foreground); line-height: 1.45; }
-.tsql-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px 14px; }
-.tsql-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--muted-foreground); min-width: 0; }
+.tsql-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 14px; }
+.tsql-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--muted-foreground); min-width: 0; }
 .tsql-field.is-full { grid-column: 1 / -1; }
-.tsql-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
+.tsql-label { font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--foreground); }
 
-/* Inputs + native dropdown. Native arrow + pointer cursor on selects. */
-.tsql-input { padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; transition: border-color 0.12s ease, box-shadow 0.12s ease; }
-.tsql-input:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
-.tsql-input::placeholder { color: var(--muted-foreground); opacity: 0.6; }
-/* Custom dropdown — mirrors TEDI Settings DropdownMenu (shadcn /
-   radix-luma): outline trigger, popup menu rendered into body. Trigger
-   geometry tracks the settings dropdown (h-9, justify-between, gap-2,
-   px-2.5, text-[12px]); popup uses bg-popover with the same rounded-2xl
-   items so it reads as the same component family. */
-.tsql-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; height: 36px; min-height: 36px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease; min-width: 0; }
-.tsql-select:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.06))); border-color: var(--ring, var(--border)); }
-.tsql-select:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
+/* Form chrome - mirrors the host's <Input> component (bg-input/50,
+   transparent border at rest, --ring on focus, host --radius for
+   corners). Compact 28 px height keeps the data-dense workbench
+   readable; the connection editor scales them up to 32 px so the modal
+   feels closer to the host's 36 px default. */
+.tsql-input { box-sizing: border-box; padding: 4px 10px; height: 28px; border: 1px solid transparent; border-radius: var(--radius, 0); background: color-mix(in srgb, var(--input) 50%, transparent); color: var(--foreground); font-size: 12px; font-family: inherit; transition: border-color 0.12s ease, background-color 0.12s ease; outline: none; }
+.tsql-input:hover { background: color-mix(in srgb, var(--input) 60%, transparent); }
+.tsql-input:focus, .tsql-input:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); background: color-mix(in srgb, var(--input) 60%, transparent); box-shadow: none; }
+.tsql-input::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+.tsql-input[aria-invalid="true"] { border-color: var(--destructive, #ef4444); }
+.tsql-input[disabled] { opacity: 0.5; cursor: not-allowed; }
+/* Custom dropdown trigger uses the same chrome as inputs so a row of
+   [input] [select] reads as one component family. Popup menu is rendered
+   into body with the host's --popover bg + 1 px ring + square corners. */
+.tsql-select { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; height: 28px; min-height: 28px; border: 1px solid transparent; border-radius: var(--radius, 0); background: color-mix(in srgb, var(--input) 50%, transparent); color: var(--foreground); font-size: 12px; font-family: inherit; cursor: pointer; transition: background-color 0.12s ease, border-color 0.12s ease; min-width: 0; outline: none; }
+.tsql-select:hover { background: color-mix(in srgb, var(--input) 60%, transparent); }
+.tsql-select:focus, .tsql-select:focus-visible, .tsql-select[aria-expanded="true"] { border-color: var(--ring, var(--primary, #3b82f6)); background: color-mix(in srgb, var(--input) 60%, transparent); box-shadow: none; }
 .tsql-select-label { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .tsql-select-caret { display: inline-flex; flex-shrink: 0; opacity: 0.7; color: currentColor; transition: transform 0.15s ease; }
 .tsql-select[aria-expanded="true"] .tsql-select-caret { transform: rotate(180deg); }
 
-.tsql-select-menu { list-style: none; margin: 0; padding: 6px; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 14px 32px rgba(0,0,0,0.22); max-height: 320px; overflow-y: auto; font-size: 12px; min-width: 180px; }
-.tsql-select-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; cursor: pointer; font-weight: 500; color: var(--foreground); user-select: none; transition: background 0.1s ease; }
-.tsql-select-item:hover, .tsql-select-item:focus-visible { background: var(--accent, rgba(127,127,127,0.1)); outline: none; }
+.tsql-select-menu { list-style: none; margin: 0; padding: 6px; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: var(--radius, 0); box-shadow: 0 14px 32px rgba(0,0,0,0.22); max-height: 320px; overflow-y: auto; font-size: 12px; min-width: 180px; }
+.tsql-select-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius, 0); cursor: pointer; font-weight: 500; color: var(--foreground); user-select: none; transition: background 0.1s ease; }
+.tsql-select-item:hover, .tsql-select-item:focus-visible { background: var(--accent, rgba(127,127,127,0.1)); color: var(--accent-foreground, var(--foreground)); outline: none; }
 .tsql-select-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-select-item-check { margin-left: auto; flex-shrink: 0; color: var(--primary, #3b82f6); }
 .tsql-select-item.is-selected { color: var(--foreground); font-weight: 600; }
@@ -2777,15 +2909,32 @@ const STYLES_CSS = `
 
 /* Narrow-window adaptations. The connection rail collapses into a single
    compressed row above the workspace; the schema tree also gets tighter. */
+@media (max-width: 960px) {
+  .tsql-workspace { grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); }
+  .tsql-input.tsql-grid-search { width: 140px; }
+  .tsql-search-wrap--grid { width: 140px; }
+  .tsql-select.tsql-grid-colfilter { max-width: 140px; min-width: 84px; }
+}
 @media (max-width: 720px) {
   .tsql-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .tsql-conn-rail { border-right: 0; border-bottom: 1px solid var(--border); max-height: 120px; }
   .tsql-workspace { grid-template-columns: minmax(160px, 200px) minmax(0, 1fr); }
+  .tsql-search-wrap--grid { width: 130px; }
+  .tsql-input.tsql-grid-search { width: 130px; }
 }
 @media (max-width: 540px) {
   .tsql-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .tsql-tree { border-right: 0; border-bottom: 1px solid var(--border); max-height: 160px; }
-  .tsql-toolbar { padding: 5px 8px; }
+  .tsql-toolbar { padding: 5px 8px; gap: 4px; }
   .tsql-btn { padding: 4px 8px; }
+  .tsql-subheader { padding: 6px 8px; flex-wrap: wrap; }
+  .tsql-search-wrap--grid { width: 120px; }
+  .tsql-input.tsql-grid-search { width: 120px; }
+  .tsql-select.tsql-grid-colfilter { max-width: 120px; min-width: 80px; }
+}
+@media (max-width: 420px) {
+  .tsql-search-wrap--grid { width: 100%; }
+  .tsql-input.tsql-grid-search { width: 100%; }
+  .tsql-select.tsql-grid-colfilter { max-width: none; width: 100%; }
 }
 `;

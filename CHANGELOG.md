@@ -2,6 +2,79 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.15 (2026-05-26)
+
+Form chrome aligned with TEDI host, autocomplete now covers SQL syntax.
+
+- Form chrome (inputs, selects, buttons, icon buttons, modal close,
+  tree rows, conn rows, row actions, search-clear, select menu items)
+  now uses the host's design tokens directly: `var(--radius)` for
+  corners (so the panel matches the host's square-corner theme), the
+  `color-mix(var(--input) 50% / transparent)` background pattern used
+  by the `<Input>` component, transparent border at rest, `var(--ring)`
+  border on focus / `[aria-expanded]`, and `var(--muted)` on hover.
+  Buttons match `<Button variant="outline" size="sm">` (28 px tall,
+  --border outline, --muted hover) so a row of [Run] [Stop] [Export]
+  reads as the same chrome family as the SSH manager / Settings page.
+- Connection-editor modal scales inputs + selects + buttons up to 32 px
+  so the form feels closer to the host's 36 px default without making
+  the workbench toolbar feel oversized.
+- Schema-tree rows + conn-rail rows now expose an `.is-active` state
+  that paints with `var(--accent)` + `var(--accent-foreground)` (was
+  hard-coded grey), so dark / light / brand-tinted themes all paint a
+  visible "you are here" highlight.
+- Query-editor autocomplete now suggests SQL syntax in addition to
+  schema. Three new buckets:
+  - common SQL keywords (`SELECT`, `JOIN`, `GROUP BY`, `RETURNING`, etc.)
+    with the `keyword` icon glyph and boost 10
+  - common SQL functions (`COUNT`, `COALESCE`, `ROW_NUMBER`, etc.) with
+    the `function` glyph and boost 8
+  - common SQL data types (`INT`, `VARCHAR`, `JSONB`, etc.) with the
+    `type` glyph and boost 3
+  Plus engine-specific extensions pulled from the active session's
+  connection kind: MySQL gets `AUTO_INCREMENT`, `UNSIGNED`, `IFNULL`,
+  `GROUP_CONCAT`, …; PostgreSQL gets `SERIAL`, `JSONB`, `ILIKE`,
+  `DATE_TRUNC`, `STRING_AGG`, …; SQLite gets `AUTOINCREMENT`, `PRAGMA`,
+  `STRFTIME`, …. Tables outrank keywords (boost 12 vs 10) so the first
+  match after `FROM ` is still the table; columns drop to boost 5 so
+  they surface mainly when the prefix is column-shaped.
+- Table entries now use the `class` icon glyph (capital C) instead of
+  `type` so SQL data types and tables don't share the same letter in
+  the autocomplete popup.
+
+## 0.2.14 (2026-05-26)
+
+Search input + splitter polish.
+
+- Search-input clear (X) button: previously its inner SVG inherited
+  inline display from the host icon API, which could push the button
+  out of its absolutely-positioned slot and parked the X under the
+  input on some Webview2 builds. The button now forces a flex-shrink: 0
+  box with `display: block` on the icon child plus `pointer-events: none`
+  so the click always hits the wrapping button, and the wrap is
+  declared `position: relative` on the base class (not just the variant)
+  so both tree-search and grid-search share identical anchoring.
+- Removed the leftover hairline above the editable table grid. The
+  toolbar row already separates itself with its card-tinted background;
+  the extra `border-top` made the search + filter strip look like it
+  was hovering on a thin rule. Matches the 0.2.12 cleanup of the other
+  toolbar separators.
+- Schema tree list now scrolls flush to the top of its scrollport. The
+  4 px top padding on `.tsql-tree-list` was leaving a visible gap above
+  the first database row when the list scrolled to position 0; gutter
+  moved to the head (`padding-bottom: 6px` on `.tsql-tree-head`) so the
+  spacing stays the same but rows actually reach the top edge.
+- Editor / results splitter now uses pointer events instead of mouse
+  events, so the drag works on touch + pen surfaces (Surface, iPad
+  with a trackpad, etc.). Added pointer-capture so a drag doesn't lose
+  focus when the cursor leaves the 6 px hit-area, plus keyboard nudge
+  (Up/Down on the splitter shrinks / grows the editor by 16 px) and a
+  focus-visible indicator so keyboard users can see the handle.
+- Tighter responsive grid: new 960 px and 420 px breakpoints squeeze
+  the grid search input + column filter widths down so the toolbar
+  stays single-row on narrower workbenches; below 420 px the search +
+  filter expand to full width and stack instead of wrapping awkwardly.
+
 ## 0.2.13 (2026-05-26)
 
 - Accordion-style schema tree: expanding a database now auto-collapses

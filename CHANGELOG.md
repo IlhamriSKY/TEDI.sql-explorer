@@ -2,6 +2,34 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.17 (2026-05-26)
+
+Free-form queries now resolve unqualified tables, splitter matches the
+host pane handle.
+
+- Free-form `SELECT * FROM table` no longer errors with "1046 (3D000):
+  No database selected" when the connection has no default_database
+  pinned. The schema tree now tracks an active database per session:
+  expanding a database (clicking the accordion header) or opening a
+  table sets it as the current context. The frontend passes that
+  context to `/query` and the sidecar runs `USE \`db\`` (MySQL) or
+  `SET search_path TO db` (Postgres) on a pool-acquired connection
+  pinned for the whole batch, so every statement sees the same session
+  state. SQLite ignores the field (single-file DBs).
+- Sidecar: `QueryRequest` gained an optional `database` field; falls
+  back to `Connection.default_database` when the request omits it.
+  Pool connection is held for the lifetime of the batch via the new
+  `PinnedConn` enum so the per-statement pool checkout no longer
+  drops the session setting between statements.
+- Active database is highlighted in the schema tree (`.is-active`
+  paints with --accent / --accent-foreground via the chrome the form
+  refresh in 0.2.15 added).
+- Splitter between editor and results now matches the host's
+  <ResizableHandle> chrome: 1 px line in --tedi-resize-handle painted
+  via ::before, with the splitter itself kept at 6 px flex-basis so
+  the hit area stays drag-friendly. Hover / drag / focus swap the line
+  to --ring so the active state reads the same as TEDI's pane handles.
+
 ## 0.2.16 (2026-05-26)
 
 - Fix: 0.2.15 activation crash. A CSS comment inside the STYLES_CSS

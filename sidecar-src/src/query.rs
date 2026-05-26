@@ -32,6 +32,11 @@ pub struct QueryRequest {
     /// id to abort an in-flight query.
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Active database / schema context for the query. MySQL: pins the
+    /// session to `USE <db>` so unqualified table names resolve. Postgres:
+    /// sets `search_path`. SQLite: ignored (single-file dbs).
+    #[serde(default)]
+    pub database: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -243,13 +248,36 @@ pub async fn execute(
     row_limit: u64,
     timeout: Duration,
     cancel: CancellationToken,
+    database: Option<&str>,
 ) -> AppResult<Vec<StatementResult>> {
     let statements = split_statements(sql);
     if statements.is_empty() {
         return Err(AppError::BadRequest("empty SQL".into()));
     }
 
+    // Database context: acquire a single connection from the pool and pin
+    // it for the whole batch so `USE <db>` (MySQL) or `SET search_path`
+    // (Postgres) survives across statements. Without this, sqlx's
+    // pool.execute() may hand a different physical connection to each
+    // statement, dropping the session-level setting.
+    let pinned: Option<PinnedConn> = match (backend, database) {
+        (Backend::Mysql(pool), Some(db)) if !db.is_empty() => {
+            let mut conn = pool.acquire().await?;
+            let use_sql = format!("USE `{}`", db.replace('`', "``"));
+            sqlx::query(&use_sql).execute(&mut *conn).await?;
+            Some(PinnedConn::Mysql(conn))
+        }
+        (Backend::Postgres(pool), Some(db)) if !db.is_empty() => {
+            let mut conn = pool.acquire().await?;
+            let set_sql = format!("SET search_path TO \"{}\"", db.replace('"', "\"\""));
+            sqlx::query(&set_sql).execute(&mut *conn).await?;
+            Some(PinnedConn::Postgres(conn))
+        }
+        _ => None,
+    };
+
     let mut out = Vec::with_capacity(statements.len());
+    let mut pinned = pinned;
     for stmt in statements {
         if cancel.is_cancelled() {
             out.push(StatementResult::Error {
@@ -274,7 +302,10 @@ pub async fn execute(
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(AppError::Canceled),
-            r = tokio::time::timeout(timeout, run_one(backend, &stmt, kind, row_limit)) => {
+            r = tokio::time::timeout(
+                timeout,
+                run_one(backend, pinned.as_mut(), &stmt, kind, row_limit),
+            ) => {
                 match r {
                     Err(_) => Err(AppError::Timeout),
                     Ok(inner) => inner,
@@ -310,6 +341,14 @@ pub async fn execute(
     Ok(out)
 }
 
+/// Holds the pool-acquired connection pinned to the batch's database
+/// context. Dropped at the end of `execute()` to return the connection
+/// to the pool. SQLite has no database concept so it never pins.
+enum PinnedConn {
+    Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
+    Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
+}
+
 fn stamp_elapsed(sr: &mut StatementResult, elapsed_ms: u64) {
     match sr {
         StatementResult::Rows { elapsed_ms: e, .. } => *e = elapsed_ms,
@@ -320,70 +359,61 @@ fn stamp_elapsed(sr: &mut StatementResult, elapsed_ms: u64) {
 
 async fn run_one(
     backend: &Backend,
+    pinned: Option<&mut PinnedConn>,
     sql: &str,
     kind: StatementKind,
     row_limit: u64,
 ) -> AppResult<StatementResult> {
     let is_read = matches!(kind, StatementKind::Read | StatementKind::Unknown);
-    match backend {
-        Backend::Mysql(pool) => {
+    match (backend, pinned) {
+        (Backend::Mysql(_), Some(PinnedConn::Mysql(conn))) => {
+            if is_read {
+                let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
+                let (columns, decoded, truncated) = collect_mysql_rows(rows, row_limit);
+                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
+            } else {
+                let r = sqlx::query(sql).execute(&mut **conn).await?;
+                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
+            }
+        }
+        (Backend::Postgres(_), Some(PinnedConn::Postgres(conn))) => {
+            if is_read {
+                let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
+                let (columns, decoded, truncated) = collect_pg_rows(rows, row_limit);
+                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
+            } else {
+                let r = sqlx::query(sql).execute(&mut **conn).await?;
+                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
+            }
+        }
+        (Backend::Mysql(pool), _) => {
             if is_read {
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 let (columns, decoded, truncated) = collect_mysql_rows(rows, row_limit);
-                Ok(StatementResult::Rows {
-                    sql: sql.to_string(),
-                    columns,
-                    rows: decoded,
-                    truncated,
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec {
-                    sql: sql.to_string(),
-                    rows_affected: r.rows_affected(),
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
             }
         }
-        Backend::Postgres(pool) => {
+        (Backend::Postgres(pool), _) => {
             if is_read {
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 let (columns, decoded, truncated) = collect_pg_rows(rows, row_limit);
-                Ok(StatementResult::Rows {
-                    sql: sql.to_string(),
-                    columns,
-                    rows: decoded,
-                    truncated,
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec {
-                    sql: sql.to_string(),
-                    rows_affected: r.rows_affected(),
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
             }
         }
-        Backend::Sqlite(pool) => {
+        (Backend::Sqlite(pool), _) => {
             if is_read {
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
                 let (columns, decoded, truncated) = collect_sqlite_rows(rows, row_limit);
-                Ok(StatementResult::Rows {
-                    sql: sql.to_string(),
-                    columns,
-                    rows: decoded,
-                    truncated,
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec {
-                    sql: sql.to_string(),
-                    rows_affected: r.rows_affected(),
-                    elapsed_ms: 0,
-                })
+                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
             }
         }
     }

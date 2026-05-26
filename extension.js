@@ -1551,10 +1551,11 @@ function renderDbNode(session, dbName) {
   appendIcon(caretBox, "ArrowRight01Icon", { size: 11 });
   const iconBox = el("span", { class: "tsql-tree-icon" });
   appendIcon(iconBox, "Database01Icon", { size: 14 });
+  const isActive = session.currentDatabase === dbName;
   const head = el(
     "button",
     {
-      class: "tsql-tree-row",
+      class: `tsql-tree-row${isActive ? " is-active" : ""}`,
       attrs: { type: "button" },
     },
     caretBox,
@@ -1582,6 +1583,12 @@ function renderDbNode(session, dbName) {
           if (sCaret) sCaret.classList.remove("is-open");
         }
       }
+      // Opening a database sets it as the active context for free-form
+      // queries (sent to /query so the sidecar issues USE / search_path).
+      session.currentDatabase = dbName;
+      panelRoot?.querySelectorAll(".tsql-node-db .tsql-tree-row.is-active")
+        .forEach((r) => r.classList.remove("is-active"));
+      head.classList.add("is-active");
     }
     childList.style.display = open ? "none" : "";
     caretBox.classList.toggle("is-open", !open);
@@ -1993,6 +2000,10 @@ function cellTooltip(value) {
 
 async function openTable(session, target, scrollIntoView = false) {
   session.activeTable = target;
+  // Opening a table also sets the active database context, so a
+  // subsequent free-form `SELECT * FROM …` in the query editor
+  // resolves against the same DB the user just clicked into.
+  session.currentDatabase = target.database;
   session.tableSnapshot = null;
   // Per-table grid state. Cleared on switch so the new table opens
   // unsorted with empty filter, rather than inheriting state from the
@@ -2513,6 +2524,11 @@ async function runActiveQuery() {
         conn: session.connId,
         sql: session.sql,
         request_id: requestId,
+        // Active database context tracked from the schema tree. Sidecar
+        // runs USE <db> (MySQL) / SET search_path (Postgres) on a
+        // pinned pool connection so unqualified table names resolve
+        // even when the connection has no default_database pinned.
+        database: session.currentDatabase ?? undefined,
       },
     });
     session.result = resp;
@@ -2780,10 +2796,15 @@ const STYLES_CSS = `
    parent .tsql-main, which flex-basis: var(...) flows into. 6px hit area
    with a thin centred indicator that only paints on hover / drag, so the
    splitter is invisible at rest but obviously interactive on approach. */
-.tsql-splitter { flex: 0 0 6px; cursor: ns-resize; background: transparent; position: relative; user-select: none; touch-action: none; outline: none; }
-.tsql-splitter::before { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 2px; background: transparent; border-radius: 1px; transition: background 0.12s ease; }
-.tsql-splitter:hover, .tsql-splitter.is-dragging, .tsql-splitter:focus-visible { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
-.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--muted-foreground); }
+/* Splitter matches the host's <ResizableHandle> chrome (resizable.tsx):
+   a 1 px line in --tedi-resize-handle, but the splitter itself stays a
+   6 px flex item so users have a clickable target instead of needing to
+   land on a single pixel. The visible 1 px line lives in the ::before
+   pseudo, centred vertically. Hover / drag / focus swap the line to
+   --ring to match TEDI's active pane indicator. */
+.tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; }
+.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
+.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--ring, var(--primary, #3b82f6)); }
 .tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }

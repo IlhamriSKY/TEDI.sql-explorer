@@ -356,6 +356,14 @@ async fn handle_query(
         let mut in_flight = state.in_flight.write().await;
         in_flight.map.insert(request_id.clone(), cancel.clone());
     }
+    // Fall back to the connection's saved default_database when the
+    // request omits its own context, so a user who pinned a DB on the
+    // connection but typed a free-form query still resolves unqualified
+    // names.
+    let database = req
+        .database
+        .as_deref()
+        .or(conn.default_database.as_deref());
     let result = execute(
         &conn.backend,
         &conn.config,
@@ -363,6 +371,7 @@ async fn handle_query(
         row_limit,
         timeout,
         cancel,
+        database,
     )
     .await;
     {

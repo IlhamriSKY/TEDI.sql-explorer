@@ -2,6 +2,34 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.12 (2026-05-26)
+
+Workbench layout polish.
+
+- Removed the bottom border line under every toolbar / subheader / tree
+  head / editor / result-tabs / result-meta strip. The card-tinted
+  background and search-input outline already give enough visual
+  separation; the extra hairline was redundant and made the workbench
+  look busier than the host's Settings panes.
+- Replaced the native `<select>` column filter in the table toolbar with
+  the same custom `select()` dropdown used by the connection editor:
+  outline trigger, ArrowDown01Icon caret, popup rendered into body with
+  Tick02Icon on the selected option. Now visually consistent with every
+  other dropdown in the workbench.
+- Schema list scrollbar no longer crawls up past the search filter row.
+  Made `.tsql-tree` a flex column with the head fixed (`flex: 0 0 auto`)
+  and the list scrollable on its own (`flex: 1 1 auto; overflow-y:
+  auto`). The scrollbar now starts beneath the search input where the
+  scrollable rows actually begin.
+- Query editor and results pane are now vertically resizable. A 6px
+  splitter sits between them with a centred drag indicator that paints
+  only on hover / drag. Drag updates a CSS variable on the parent so the
+  editor takes the dragged height and results flexes into the rest.
+  Clamps at min 80px editor / min 120px results so neither pane can
+  collapse beyond usability. The height is persisted on the session so
+  switching connections (or remounting the panel) keeps the user's
+  preferred split.
+
 ## 0.2.11 (2026-05-26)
 
 - Search inputs (schema rail "Search databases" + table grid "Search rows")

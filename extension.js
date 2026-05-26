@@ -1609,6 +1609,51 @@ function renderEditorAndResults(session) {
     );
   }
 
+  // Vertical splitter between editor and results. Drag updates the CSS
+  // variable that drives the editor's flex-basis; the results pane takes
+  // the rest via `flex: 1 1 auto`. Height is persisted on the session so
+  // re-renders (connection switch, panel remount) restore it.
+  const splitter = el("div", {
+    class: "tsql-splitter",
+    attrs: {
+      role: "separator",
+      "aria-orientation": "horizontal",
+      "aria-label": "Resize query editor",
+    },
+  });
+  wrap.appendChild(splitter);
+  if (session.editorHeightPx) {
+    wrap.style.setProperty("--tsql-editor-h", `${session.editorHeightPx}px`);
+  }
+  splitter.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const mainRect = wrap.getBoundingClientRect();
+    const toolbarH = wrap.querySelector(".tsql-toolbar")?.offsetHeight ?? 0;
+    const splitterH = splitter.offsetHeight;
+    const minEditor = 80;
+    const minResults = 120;
+    const onMove = (ev) => {
+      const desired = ev.clientY - mainRect.top - toolbarH;
+      const maxEditor = mainRect.height - toolbarH - splitterH - minResults;
+      const clamped = Math.max(minEditor, Math.min(maxEditor, desired));
+      wrap.style.setProperty("--tsql-editor-h", `${clamped}px`);
+      session.editorHeightPx = clamped;
+    };
+    const onUp = () => {
+      splitter.classList.remove("is-dragging");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    splitter.classList.add("is-dragging");
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    e.preventDefault();
+  });
+
   const results = el("div", { class: "tsql-results", attrs: { "data-results-root": "1" } });
   if (session.activeTable) {
     renderTableGrid(results, session);
@@ -1805,20 +1850,18 @@ function renderTableGrid(container, session) {
     },
   });
 
-  const colSelect = el("select", {
-    class: "tsql-grid-colfilter",
-    attrs: { "aria-label": "Filter column" },
-  });
-  colSelect.appendChild(el("option", { attrs: { value: "" }, text: "All columns" }));
-  for (const col of snap.columns) {
-    const opt = el("option", { attrs: { value: col }, text: col });
-    if (col === session.gridSearchCol) opt.selected = true;
-    colSelect.appendChild(opt);
-  }
-  colSelect.addEventListener("change", () => {
-    session.gridSearchCol = colSelect.value;
+  // Column filter dropdown. Uses the same custom `select()` helper that
+  // powers the connection-editor dropdowns so the workbench chrome stays
+  // consistent (Settings-style trigger + caret + Tick02Icon on selected).
+  const colOptions = [
+    { value: "", label: "All columns" },
+    ...snap.columns.map((c) => ({ value: c, label: c })),
+  ];
+  const colSelect = select(colOptions, session.gridSearchCol ?? "", (val) => {
+    session.gridSearchCol = val;
     applyGridFilter(container, session);
   });
+  colSelect.classList.add("tsql-grid-colfilter");
 
   container.appendChild(
     el(
@@ -2452,13 +2495,13 @@ const STYLES_CSS = `
 
 /* Workspace: schema tree (auto-shrinking) + editor / results column. */
 .tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
-.tsql-tree { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; min-width: 0; }
+.tsql-tree { display: flex; flex-direction: column; border-right: 1px solid var(--border); min-height: 0; min-width: 0; }
 /* Sticky head holds the "Schema" subheader + search input. Pinning the
    wrapper (not the children individually) keeps the input's horizontal
    margin gutters opaque so rows scrolling under it don't show through. */
-.tsql-tree-head { position: sticky; top: 0; z-index: 2; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 4px; }
 .tsql-tree-head .tsql-subheader { border-bottom: 0; }
-.tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); gap: 8px; }
+.tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); background: var(--card, var(--background)); gap: 8px; }
 .tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
 .tsql-tree-search:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
 .tsql-tree-search::placeholder { color: var(--muted-foreground); opacity: 0.7; }
@@ -2473,7 +2516,7 @@ const STYLES_CSS = `
 .tsql-search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; display: none; align-items: center; justify-content: center; border-radius: 4px; transition: background 0.12s ease, color 0.12s ease; }
 .tsql-search-clear.is-visible { display: inline-flex; }
 .tsql-search-clear:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
-.tsql-tree-list { list-style: none; margin: 0; padding: 4px 0; }
+.tsql-tree-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; list-style: none; margin: 0; padding: 4px 0; min-height: 0; }
 .tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tsql-tree-node { padding: 0; }
 .tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: 4px; }
@@ -2488,8 +2531,8 @@ const STYLES_CSS = `
 .tsql-tree-error { padding: 4px 12px; color: var(--destructive, #ef4444); font-size: 11px; }
 .tsql-tree-empty { padding: 4px 16px; color: var(--muted-foreground); font-size: 11px; }
 
-.tsql-main { display: grid; grid-template-rows: auto minmax(80px, 1fr) minmax(120px, 1.4fr); min-height: 0; min-width: 0; }
-.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); flex-wrap: wrap; }
+.tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; }
 .tsql-btn { padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); cursor: pointer; font-size: 11px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; line-height: 1; transition: background 0.12s ease, border-color 0.12s ease; }
 .tsql-btn:hover:not([disabled]) { background: var(--accent, rgba(127,127,127,0.08)); border-color: var(--ring, var(--border)); }
 .tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
@@ -2498,16 +2541,25 @@ const STYLES_CSS = `
 
 /* Code-editor container: hosts a CodeMirror EditorView mounted by
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
-.tsql-editor { width: 100%; height: 100%; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; }
+.tsql-editor { width: 100%; min-height: 80px; overflow: hidden; display: flex; flex-direction: column; flex: 0 0 var(--tsql-editor-h, 45%); }
 .tsql-editor .cm-editor { height: 100%; flex: 1 1 auto; min-height: 0; }
 .tsql-editor .cm-editor.cm-focused { outline: none; }
-.tsql-results { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
+/* Vertical splitter between the query editor and the results pane.
+   Drag handler in renderEditorAndResults updates --tsql-editor-h on the
+   parent .tsql-main, which flex-basis: var(...) flows into. 6px hit area
+   with a thin centred indicator that only paints on hover / drag, so the
+   splitter is invisible at rest but obviously interactive on approach. */
+.tsql-splitter { flex: 0 0 6px; cursor: ns-resize; background: transparent; position: relative; user-select: none; }
+.tsql-splitter::before { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 2px; background: transparent; border-radius: 1px; transition: background 0.12s ease; }
+.tsql-splitter:hover, .tsql-splitter.is-dragging { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before { background: var(--muted-foreground); }
+.tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
+.tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
 .tsql-result-tab:hover { color: var(--foreground); }
 .tsql-result-tab.is-active { color: var(--foreground); border-color: var(--primary, #3b82f6); background: var(--accent, rgba(127,127,127,0.08)); }
 .tsql-result-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0; display: flex; flex-direction: column; }
-.tsql-result-meta { padding: 6px 12px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tsql-result-meta { padding: 6px 12px; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 /* Result / table grid — sticky header with subtle shadow, zebra rows,
    no horizontal overflow surprise. */
@@ -2528,8 +2580,12 @@ const STYLES_CSS = `
    typical widths and wraps gracefully when narrow. */
 .tsql-input.tsql-grid-search { width: 160px; padding: 4px 8px; font-size: 11px; height: 26px; }
 .tsql-input.tsql-grid-search:focus { border-color: var(--foreground); box-shadow: none; }
-.tsql-grid-colfilter { padding: 3px 6px; font-size: 11px; height: 26px; max-width: 140px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-family: inherit; }
-.tsql-grid-colfilter:focus { outline: none; border-color: var(--foreground); }
+/* Column filter uses the shared .tsql-select chrome; the .tsql-grid-colfilter
+   class trims the default 36px Settings height down to the 26px toolbar
+   row size and caps the width so wide column names don't push the toolbar
+   into a wrap. */
+.tsql-select.tsql-grid-colfilter { height: 26px; min-height: 26px; padding: 0 8px; font-size: 11px; max-width: 160px; min-width: 96px; }
+.tsql-select.tsql-grid-colfilter .tsql-select-label { font-weight: normal; }
 .tsql-grid tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 /* Zebra stripes use foreground tint at low alpha so dark/light themes
    both get a clean shade pair without leaning into any accent hue. */

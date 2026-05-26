@@ -2494,13 +2494,13 @@ const STYLES_CSS = `
 .tsql-dialog { background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
 .tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
 
-/* Connection editor — docked side panel anchored to the right of the
+/* Connection editor - docked side panel anchored to the right of the
    workbench. No overlay backdrop (rail/tree stay interactive); the
    title bar is a drag handle. Visuals mirror the standalone Settings
-   window: brand `--primary` accent outline + 0.5rem corners + faded
-   card-tinted header. The border uses `outline` + negative offset (not
-   `border`) so it survives WebView2 edge clipping on Windows resize,
-   matching the trick `#settings-root` uses in globals.css. */
+   window: brand --primary accent outline + 0.5rem corners + faded
+   card-tinted header. The border uses 'outline' + negative offset (not
+   'border') so it survives WebView2 edge clipping on Windows resize,
+   matching the trick '#settings-root' uses in globals.css. */
 .tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--background); color: var(--popover-foreground, var(--foreground)); border-radius: 0.5rem; outline: 1px solid var(--primary); outline-offset: -1px; box-shadow: 0 18px 40px rgba(0,0,0,0.32); overflow: hidden; }
 .tsql-conn-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); background: color-mix(in srgb, var(--card, var(--background)) 60%, transparent); cursor: grab; user-select: none; touch-action: none; }
 .tsql-conn-modal-header:active { cursor: grabbing; }

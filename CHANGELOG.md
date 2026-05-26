@@ -2,6 +2,19 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.10 (2026-05-26)
+
+Hotfix: the extension failed to activate in 0.2.9 with
+`SyntaxError: Invalid left-hand side expression in postfix operation`.
+Inside the `STYLES_CSS` template literal a connection-editor CSS comment
+used markdown-style inline-code backticks (`` `--primary` ``, `` `outline` ``,
+`` `border` ``, `` `#settings-root` ``). Each one closed the JS template literal
+prematurely, so the parser tried to evaluate the trailing CSS as code
+and bailed. The Database icon in the header bar never registered, the
+SQL Explorer tab never opened, and no toast surfaced because activation
+threw before any setItem call. Replaced the inline-code styling with
+plain quotes/dashes; behaviour is otherwise identical to 0.2.9.
+
 ## 0.2.9 (2026-05-26)
 
 UI polish around connection editor, schema tree, and the row grid.

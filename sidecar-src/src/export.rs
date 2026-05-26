@@ -10,7 +10,7 @@ use sqlx::{Column, Row};
 
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
-use crate::schema::is_safe_ident;
+use crate::schema::{escape_mysql_ident, escape_pg_ident};
 use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row};
 
 #[derive(Deserialize)]
@@ -53,11 +53,10 @@ pub struct ExportResponse {
 
 pub async fn run_export(backend: &Backend, req: &ExportRequest) -> AppResult<ExportResponse> {
     let sql = build_sql(req)?;
-    let table_for_sql = req
-        .table
-        .as_deref()
-        .filter(|t| is_safe_ident(t))
-        .unwrap_or("rows");
+    // `format_output` re-escapes via `quote_ident`, so any table name is
+    // safe to pass through. Fall back to `rows` only for raw-SQL exports
+    // where the request didn't name a table at all.
+    let table_for_sql = req.table.as_deref().unwrap_or("rows");
 
     match backend {
         Backend::Mysql(pool) => {
@@ -125,24 +124,25 @@ fn build_sql(req: &ExportRequest) -> AppResult<String> {
         .table
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("either `sql` or `table` required".into()))?;
-    if !is_safe_ident(table) {
-        return Err(AppError::BadRequest(format!("invalid table: {table}")));
-    }
-    // Caller will pass the right database/schema for the active connection's
-    // backend; we just inline it as a quoted identifier.
+    // Identifiers are escape-and-quoted instead of allow-listed so names
+    // with hyphens / leading digits / non-ASCII still work. The presence of
+    // `database` vs `schema` selects the backend quoting style (MySQL
+    // backticks vs PG/SQLite double quotes).
     if let Some(db) = &req.database {
-        if !is_safe_ident(db) {
-            return Err(AppError::BadRequest(format!("invalid database: {db}")));
-        }
-        return Ok(format!("SELECT * FROM `{db}`.`{table}`"));
+        return Ok(format!(
+            "SELECT * FROM {}.{}",
+            escape_mysql_ident(db)?,
+            escape_mysql_ident(table)?
+        ));
     }
     if let Some(sc) = &req.schema {
-        if !is_safe_ident(sc) {
-            return Err(AppError::BadRequest(format!("invalid schema: {sc}")));
-        }
-        return Ok(format!("SELECT * FROM \"{sc}\".\"{table}\""));
+        return Ok(format!(
+            "SELECT * FROM {}.{}",
+            escape_pg_ident(sc)?,
+            escape_pg_ident(table)?
+        ));
     }
-    Ok(format!("SELECT * FROM \"{table}\""))
+    Ok(format!("SELECT * FROM {}", escape_pg_ident(table)?))
 }
 
 fn format_output(

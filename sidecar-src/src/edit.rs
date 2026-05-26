@@ -1,9 +1,10 @@
 //! Table-grid edit endpoints: paged SELECT + INSERT / UPDATE / DELETE by PK.
 //!
-//! All identifiers are validated against the strict allow-list in
-//! `schema::is_safe_ident` before being inlined. Values flow through bound
-//! parameters via the per-backend `bind_json` helpers, so the SQL itself
-//! never carries user-supplied data.
+//! Identifiers are escape-and-quoted via `schema::escape_*_ident` before
+//! being inlined, so names with hyphens, digits, or non-ASCII characters
+//! work the same way they do in `phpMyAdmin` / `psql`. Values flow through
+//! bound parameters via the per-backend `bind_json` helpers, so the SQL
+//! itself never carries user-supplied data.
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use sqlx::{Column, Row, TypeInfo};
 
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
-use crate::schema::is_safe_ident;
+use crate::schema::{escape_mysql_ident, escape_pg_ident};
 use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row};
 
 #[derive(Deserialize)]
@@ -73,38 +74,31 @@ pub struct MutationResponse {
 // --------------------------- Identifier helpers ------------------------------
 
 fn qualify_mysql(database: &str, table: &str) -> AppResult<String> {
-    if !is_safe_ident(database) || !is_safe_ident(table) {
-        return Err(AppError::BadRequest("invalid identifier".into()));
-    }
-    Ok(format!("`{database}`.`{table}`"))
+    Ok(format!(
+        "{}.{}",
+        escape_mysql_ident(database)?,
+        escape_mysql_ident(table)?
+    ))
 }
 
 fn qualify_pg(schema: &str, table: &str) -> AppResult<String> {
-    if !is_safe_ident(schema) || !is_safe_ident(table) {
-        return Err(AppError::BadRequest("invalid identifier".into()));
-    }
-    Ok(format!("\"{schema}\".\"{table}\""))
+    Ok(format!(
+        "{}.{}",
+        escape_pg_ident(schema)?,
+        escape_pg_ident(table)?
+    ))
 }
 
 fn qualify_sqlite(table: &str) -> AppResult<String> {
-    if !is_safe_ident(table) {
-        return Err(AppError::BadRequest("invalid identifier".into()));
-    }
-    Ok(format!("\"{table}\""))
+    escape_pg_ident(table)
 }
 
 fn quote_mysql_ident(name: &str) -> AppResult<String> {
-    if !is_safe_ident(name) {
-        return Err(AppError::BadRequest(format!("invalid identifier: {name}")));
-    }
-    Ok(format!("`{name}`"))
+    escape_mysql_ident(name)
 }
 
 fn quote_pg_ident(name: &str) -> AppResult<String> {
-    if !is_safe_ident(name) {
-        return Err(AppError::BadRequest(format!("invalid identifier: {name}")));
-    }
-    Ok(format!("\"{name}\""))
+    escape_pg_ident(name)
 }
 
 fn order_dir_ok(s: &str) -> bool {

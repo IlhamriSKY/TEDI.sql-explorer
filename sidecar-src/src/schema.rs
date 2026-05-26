@@ -297,13 +297,11 @@ pub async fn list_columns(
         }
         Backend::Sqlite(pool) => {
             // SQLite doesn't accept bound table names in PRAGMA, so we
-            // validate the identifier and inline it.
-            if !is_safe_ident(table) {
-                return Err(AppError::BadRequest(format!(
-                    "invalid sqlite table identifier: {table}"
-                )));
-            }
-            let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+            // escape-and-quote the identifier inline. `escape_pg_ident`
+            // doubles any embedded `"`, which is the only metacharacter
+            // inside double-quoted SQLite identifiers.
+            let quoted = escape_pg_ident(table)?;
+            let sql = format!("PRAGMA table_info({quoted})");
             let rows = sqlx::query(&sql).fetch_all(pool).await?;
             // Detect AUTOINCREMENT by inspecting sqlite_sequence.
             let auto_inc = sqlx::query(
@@ -342,16 +340,36 @@ pub async fn list_columns(
     }
 }
 
-/// Strict identifier whitelist: ASCII letter/underscore start, then
-/// letter/digit/underscore. Anything else is rejected before being inlined
-/// into a non-parametrised statement (PRAGMA table_info / dynamic SELECT).
-pub fn is_safe_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return false;
+/// True iff `s` is non-empty and contains no characters that the SQL
+/// parser handles as identifier terminators outside of quotes. NUL is
+/// rejected because some drivers truncate at the first NUL byte, which
+/// would let an attacker smuggle SQL past the closing quote. Line
+/// breaks (`\n`, `\r`) are rejected for the same reason — they're legal
+/// inside MySQL backticks / PG quotes but no real schema uses them, and
+/// rejecting keeps the boundary conservative without breaking the
+/// hyphen / digit-leading / non-ASCII names we want to support.
+fn is_valid_quotable_ident(s: &str) -> bool {
+    !s.is_empty() && !s.chars().any(|c| c == '\0' || c == '\n' || c == '\r')
+}
+
+/// Quote an identifier using `quote_char`, doubling any embedded
+/// occurrence per SQL spec (`` ` `` for MySQL, `"` for PG / SQLite).
+pub fn escape_quoted_ident(name: &str, quote_char: char) -> AppResult<String> {
+    if !is_valid_quotable_ident(name) {
+        return Err(AppError::BadRequest(format!(
+            "invalid identifier: {name:?}"
+        )));
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    let escaped = name.replace(quote_char, &format!("{quote_char}{quote_char}"));
+    Ok(format!("{quote_char}{escaped}{quote_char}"))
+}
+
+/// MySQL/MariaDB: wrap in backticks, doubling any embedded backtick.
+pub fn escape_mysql_ident(name: &str) -> AppResult<String> {
+    escape_quoted_ident(name, '`')
+}
+
+/// PostgreSQL / SQLite: wrap in double-quotes, doubling embedded `"`.
+pub fn escape_pg_ident(name: &str) -> AppResult<String> {
+    escape_quoted_ident(name, '"')
 }

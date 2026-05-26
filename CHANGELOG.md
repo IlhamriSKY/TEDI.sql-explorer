@@ -2,6 +2,27 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.8 (2026-05-26)
+
+Identifier handling + UI polish.
+
+- Identifier escaping for table / column / schema names with hyphens,
+  digits, or non-ASCII characters. The previous strict allow-list
+  (`is_safe_ident`) rejected real-world names like `my-table` or
+  `2025_logs`; the new escape-and-quote pipeline (`escape_mysql_ident`,
+  `escape_pg_ident`, `escape_sqlite_ident`) handles them the same way
+  phpMyAdmin / psql do. Values still flow through bound parameters via
+  the per-backend `bind_json` helpers, so the SQL itself never carries
+  user-supplied data.
+- Modal / overlay survives panel rerenders. Editing a connection no
+  longer drops the dialog when the user clicks another row in the
+  connection rail; the host's `.tsql-conn-modal` and `.tsql-overlay`
+  nodes are detached before `clearChildren` runs and re-attached after.
+- Manifest description trimmed to one sentence so the install dialog
+  reads cleanly alongside the other reference extensions.
+- Sidecar refactor: `edit.rs` / `export.rs` / `schema.rs` reshuffled
+  around the new identifier-quoting path.
+
 ## 0.2.5 (2026-05-26)
 
 Dropdowns + brand marks now match the host's Settings dialog style.

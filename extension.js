@@ -430,8 +430,18 @@ function renderPanel(container) {
 
 function rerender() {
   if (!panelRoot) return;
+  // Detach any open modal / overlay before tearing down the panel body so
+  // an in-flight connection edit or confirm dialog survives a rerender
+  // (e.g. user clicks another connection in the rail while the editor is
+  // open). Re-attached after the rebuild so they stay on top.
+  const preserved = panelRoot.querySelectorAll(
+    ":scope > .tsql-conn-modal, :scope > .tsql-overlay",
+  );
+  const detached = Array.from(preserved);
+  for (const node of detached) panelRoot.removeChild(node);
   clearChildren(panelRoot);
   renderPanel(panelRoot);
+  for (const node of detached) panelRoot.appendChild(node);
 }
 
 function renderHeader() {
@@ -478,49 +488,15 @@ function renderConnRail() {
   return list;
 }
 
-/**
- * Stylised brand mark per backend kind. Each `<svg>` is a hand-drawn
- * abstraction (not a copy of the official trademark) sized to fit the
- * conn-row badge box. Trademarks belong to their respective owners; we
- * use a generic silhouette here so the row reads as "MySQL-like" /
- * "Postgres-like" / "SQLite-like" at a glance without shipping the
- * official assets.
- */
-/* Brand marks are stylised abstractions, not exact copies of the
- * trademarked logos. Trademarks belong to their respective owners; we
- * use brand-flavoured silhouettes so each connection kind reads as the
- * right product at a glance without bundling official assets. */
-const KIND_SVG = {
-  // MySQL: dolphin in profile, brand-blue. Curved body + crescent fin +
-  // dotted eye + wave underneath.
-  mysql:
-    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M2 14.5c1.8-1.5 4-2.4 6.4-2.4 1.7 0 3.3.5 4.7 1.4 1 .6 2 1.3 3.2 1.5 1.5.2 3-.4 4.1-1.4-.4 1.6-1.4 3-2.8 4-1.4 1-3.2 1.4-4.9 1-1.8-.4-3.4-1.4-5.3-1.7-2-.3-4.1.4-5.4 2-.3-.4-.4-.9-.4-1.4 0-1.1.4-2.1 1-3 .1-.1.2-.2.3-.3l-.9.3z"/>' +
-    '<path d="M14.5 6.2c1.2-.6 2.7-.6 3.8.2-.4.3-.8.4-1.3.4-.8 0-1.5-.4-2-1 .1.1.2.3.3.4-.4 0-.7.1-1 .3l.2-.3z" opacity="0.65"/>' +
-    '<circle cx="18.3" cy="11.5" r="0.9"/>' +
-    "</svg>",
-  // PostgreSQL: elephant head (the famous "Slonik") — round head, ear,
-  // trunk curl. Dotted eye for life.
-  postgres:
-    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M12 3c4.3 0 7.6 3.2 8 7.3.2 2.1-.4 4.3-1.8 6-1 1.2-2.5 1.9-4 1.7-1.1-.2-1.9-1.2-1.7-2.3.1-.7.6-1.3 1.3-1.5-.4-.2-.7-.6-.7-1.1 0-.7.6-1.3 1.3-1.3.3 0 .6.1.9.3-.4-.4-.6-.9-.6-1.5 0-1.2 1-2.2 2.2-2.2.2 0 .5 0 .7.1C16.7 6 14.5 4.5 12 4.5 8.4 4.5 5.5 7.4 5.5 11c0 1.8.7 3.4 1.9 4.6.7.6 1 1.6.9 2.5-.2 1.1-1 1.9-2.1 2-.4 0-.7-.1-1-.3 1.5 1.7 3.7 2.7 6 2.7 4.7 0 8.5-3.7 8.7-8.4 0-.4-.1-.7-.2-1.1-.4-2.4-1.9-4.4-4-5.6-.2-.1-.4-.2-.5-.3-1.2-.6-2.6-1-4-1z"/>' +
-    '<circle cx="15.5" cy="9.5" r="0.8" fill="var(--background)"/>' +
-    "</svg>",
-  // SQLite: a feather quill — the same "feather + database" metaphor
-  // the SQLite project uses. Cleaner outline + spine.
-  sqlite:
-    '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M21 3c-2.5 0-5 .4-7.3 1.4C11 5.4 8.7 7.1 7.2 9.4c-1 1.6-1.5 3.5-1.4 5.3 0 .6.1 1.2.3 1.7-1.2.7-2.2 1.7-3 2.9-.4.6-.8 1.2-1.1 1.9h2.3c.4-.7.8-1.2 1.4-1.8.9-.9 2-1.6 3.2-2.1 1.3-.5 2.6-.8 4-.9 1.4-.1 2.7 0 4.1.1l-.4-1c-.2-.5-.3-1.1-.3-1.7 0-.7.1-1.4.4-2.1.3-.9.8-1.7 1.4-2.4.6-.7 1.3-1.3 2-1.9V3z"/>' +
-    '<path d="M14 6.5c-.6.3-1.2.7-1.8 1.1-.5.4-1 .9-1.4 1.4" stroke="var(--background)" stroke-width="0.6" fill="none" opacity="0.5"/>' +
-    "</svg>",
+/** Display name shown for each backend kind in the rail subtitle and as
+ *  the engine dropdown label. We intentionally do not ship brand marks
+ *  here — the rail and the engine select stay text-only so the workbench
+ *  reads as part of TEDI's chrome instead of a third-party panel. */
+const KIND_LABEL = {
+  mysql: "MySQL",
+  postgres: "PostgreSQL",
+  sqlite: "SQLite",
 };
-
-function kindBadge(kind) {
-  const wrap = el("span", { class: `tsql-conn-kind tsql-kind-${kind}`, attrs: { "aria-label": kind } });
-  // Static, author-controlled SVG strings — safe to assign via innerHTML.
-  wrap.innerHTML = KIND_SVG[kind] || "";
-  return wrap;
-}
 
 function rowActionBtn(iconName, title, onClick) {
   const btn = el("button", {
@@ -542,7 +518,6 @@ function renderConnRow(c) {
         click: () => selectConnection(c.id),
       },
     },
-    kindBadge(c.kind),
     el(
       "div",
       { class: "tsql-conn-meta" },
@@ -555,14 +530,16 @@ function renderConnRow(c) {
     }),
     rowActionBtn("Delete02Icon", "Delete connection", (event) => {
       event.stopPropagation();
-      deleteConnection(c.id);
+      void confirmAndDeleteConnection(c);
     }),
   );
 }
 
 function connSubtitle(c) {
-  if (c.kind === "sqlite") return c.host || c.database || "file";
-  return `${c.user ?? ""}@${c.host ?? ""}${c.port ? ":" + c.port : ""}/${c.database ?? ""}`;
+  const kind = KIND_LABEL[c.kind] || c.kind;
+  if (c.kind === "sqlite") return `${kind} · ${c.host || c.database || "file"}`;
+  const tail = `${c.user ?? ""}@${c.host ?? ""}${c.port ? ":" + c.port : ""}/${c.database ?? ""}`;
+  return `${kind} · ${tail}`;
 }
 
 // ----------------------------- Connection dialog -----------------------------
@@ -583,9 +560,13 @@ async function openConnectionDialog(existing) {
     }
   }
 
-  // Modal overlay anchored inside the panel; keeps the dialog scoped.
-  const overlay = el("div", { class: "tsql-overlay" });
-  const dialog = el("div", { class: "tsql-dialog" });
+  // Floating tool window docked to the right of the workbench. No
+  // dark overlay (the SQL Explorer is still usable behind it); the
+  // header is a drag handle so the user can reposition it, and the
+  // X button closes it. Esc also closes when the dialog has focus.
+  const { root: dialog, body, close } = openDockedDialog({
+    title: isEdit ? "Edit connection" : "New connection",
+  });
   const form = {
     id: existing?.id ?? cryptoId(),
     name: existing?.name ?? "",
@@ -603,8 +584,6 @@ async function openConnectionDialog(existing) {
     row_limit: existing?.row_limit ?? 10000,
   };
 
-  dialog.appendChild(el("h3", { class: "tsql-dialog-title", text: isEdit ? "Edit connection" : "New connection" }));
-
   const grid = el("div", { class: "tsql-form-grid" });
 
   function field(label, control, full = false) {
@@ -617,9 +596,9 @@ async function openConnectionDialog(existing) {
   const nameInput = input({ value: form.name, onInput: (v) => (form.name = v) });
   const kindSelect = select(
     [
-      { value: "mysql", label: "MySQL / MariaDB", icon: "brand:mysql" },
-      { value: "postgres", label: "PostgreSQL", icon: "brand:postgres" },
-      { value: "sqlite", label: "SQLite", icon: "brand:sqlite" },
+      { value: "mysql", label: "MySQL / MariaDB" },
+      { value: "postgres", label: "PostgreSQL" },
+      { value: "sqlite", label: "SQLite" },
     ],
     form.kind,
     (v) => {
@@ -733,10 +712,10 @@ async function openConnectionDialog(existing) {
   }
 
   rerenderDialog();
-  dialog.appendChild(grid);
+  body.appendChild(grid);
 
   const error = el("p", { class: "tsql-form-error" });
-  dialog.appendChild(error);
+  body.appendChild(error);
 
   const actions = el(
     "div",
@@ -746,7 +725,7 @@ async function openConnectionDialog(existing) {
       text: "Cancel",
       attrs: { type: "button" },
       on: {
-        click: () => overlay.remove(),
+        click: () => close(),
       },
     }),
     el("button", {
@@ -777,7 +756,7 @@ async function openConnectionDialog(existing) {
           error.textContent = "";
           try {
             await saveAndConnect(form);
-            overlay.remove();
+            close();
             safeToast(
               `${isEdit ? "Updated" : "Added"} connection ${form.name || form.id}`,
               "success",
@@ -790,12 +769,123 @@ async function openConnectionDialog(existing) {
       },
     }),
   );
-  dialog.appendChild(actions);
-  overlay.appendChild(dialog);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) overlay.remove();
+  body.appendChild(actions);
+}
+
+/**
+ * Draggable, dockable side panel. Returns `{ root, body, header, close }`.
+ * Initial position docks to the right edge of `panelRoot`; the user can
+ * grab the title bar to move it (pointer events with capture so the drag
+ * survives transient pointer-out), and the X button or Escape closes it.
+ * Unlike the centred modal it leaves the workbench usable underneath, so
+ * the rail and tree stay clickable while the form is open.
+ */
+function openDockedDialog({ title, width = 460 }) {
+  const host = panelRoot || document.body;
+  // Only one docked dialog at a time. Without this, clicking Edit on a
+  // second connection while the first dialog is open piles two dialogs
+  // on top of each other, since the docked variant intentionally does
+  // not block clicks behind it.
+  for (const prev of host.querySelectorAll(":scope > .tsql-conn-modal")) {
+    prev.remove();
+  }
+  const root = el("div", { class: "tsql-conn-modal" });
+  root.style.width = `${width}px`;
+
+  // Header doubles as a drag handle. Pointer capture on the header keeps
+  // drag alive when the cursor briefly leaves the element (e.g. moving
+  // fast over scrollbars). `cursor: grab/grabbing` is hinted in CSS.
+  const header = el("div", { class: "tsql-conn-modal-header" });
+  const titleEl = el("span", { class: "tsql-conn-modal-title", text: title });
+  const closeBtn = el("button", {
+    class: "tsql-conn-modal-close",
+    attrs: { type: "button", "aria-label": "Close", title: "Close" },
   });
-  panelRoot.appendChild(overlay);
+  appendIcon(closeBtn, "Cancel01Icon", { size: 13, strokeWidth: 2 });
+  header.appendChild(titleEl);
+  header.appendChild(closeBtn);
+
+  const body = el("div", { class: "tsql-conn-modal-body" });
+
+  root.appendChild(header);
+  root.appendChild(body);
+
+  // Dock to the right edge by default (16px gutter). Switches to a
+  // `left`/`top` coordinate system once the user starts dragging so the
+  // dialog can be freely moved within the panel bounds.
+  root.style.position = "absolute";
+  root.style.right = "16px";
+  root.style.top = "16px";
+  root.style.zIndex = "1500";
+
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  header.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (closeBtn.contains(event.target)) return;
+    const hostRect = host.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
+    root.style.left = `${rect.left - hostRect.left}px`;
+    root.style.top = `${rect.top - hostRect.top}px`;
+    root.style.right = "";
+    startLeft = rect.left - hostRect.left;
+    startTop = rect.top - hostRect.top;
+    startX = event.clientX;
+    startY = event.clientY;
+    dragging = true;
+    try {
+      header.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer capture may fail on touch + unusual inputs; drag still
+      // works via the global move/up listeners.
+    }
+    event.preventDefault();
+  });
+  header.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const hostRect = host.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    const maxLeft = Math.max(0, hostRect.width - rect.width);
+    const maxTop = Math.max(0, hostRect.height - rect.height);
+    const nextLeft = Math.min(maxLeft, Math.max(0, startLeft + dx));
+    const nextTop = Math.min(maxTop, Math.max(0, startTop + dy));
+    root.style.left = `${nextLeft}px`;
+    root.style.top = `${nextTop}px`;
+  });
+  const endDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      header.releasePointerCapture(event.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+  header.addEventListener("pointerup", endDrag);
+  header.addEventListener("pointercancel", endDrag);
+
+  const onKey = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  };
+  document.addEventListener("keydown", onKey, true);
+
+  const close = () => {
+    document.removeEventListener("keydown", onKey, true);
+    root.remove();
+  };
+  closeBtn.addEventListener("click", close);
+
+  host.appendChild(root);
+  return { root, body, header, close };
 }
 
 function cryptoId() {
@@ -814,16 +904,11 @@ function input({ type = "text", value = "", onInput, placeholder, dataField } = 
 }
 
 /**
- * Custom dropdown that mirrors TEDI's Settings DropdownMenu (shadcn /
- * radix-luma): h-9 outline trigger with ArrowDown01Icon caret, rounded
- * popup menu rendered into `document.body`, focus-following hover,
- * Tick02Icon next to the selected item, click-outside + Escape to
- * close.
- *
- * Each option can optionally carry an `icon` field:
- *   - `"hugeicon:<Name>"` mounts the named HugeIcon via ctx.ui.icon.
- *   - `"brand:mysql" | "brand:postgres" | "brand:sqlite"` inlines the
- *     branded SVG from KIND_SVG (same mark the connection rail uses).
+ * Text-only dropdown that mirrors TEDI's Settings DropdownMenu (shadcn /
+ * radix-luma): outline trigger with an ArrowDown01Icon caret, rounded
+ * popup rendered into `document.body`, Tick02Icon next to the selected
+ * item, click-outside + Escape to close. No per-option icons by design
+ * so the workbench stays compact and reads as part of TEDI's chrome.
  *
  * Returns the trigger element. The signature matches the old native-
  * `<select>` helper so we can drop it in without changing callers.
@@ -842,11 +927,6 @@ function select(options, current, onChange) {
     },
   });
 
-  // Optional left icon mirrors the current selection's icon, so the
-  // trigger reads as "[brand] MySQL" when collapsed.
-  const leftSlot = el("span", { class: "tsql-select-left" });
-  trigger.appendChild(leftSlot);
-
   const labelSpan = el("span", { class: "tsql-select-label" });
   trigger.appendChild(labelSpan);
 
@@ -854,28 +934,9 @@ function select(options, current, onChange) {
   appendIcon(caretBox, "ArrowDown01Icon", { size: 12, strokeWidth: 2 });
   trigger.appendChild(caretBox);
 
-  const renderIconInto = (container, iconRef) => {
-    clearChildren(container);
-    if (!iconRef) return;
-    if (iconRef.startsWith("brand:")) {
-      const kind = iconRef.slice("brand:".length);
-      const svg = KIND_SVG[kind];
-      if (svg) {
-        const wrap = el("span", { class: `tsql-conn-kind tsql-kind-${kind}` });
-        wrap.innerHTML = svg;
-        container.appendChild(wrap);
-      }
-      return;
-    }
-    if (iconRef.startsWith("hugeicon:")) {
-      appendIcon(container, iconRef.slice("hugeicon:".length), { size: 14 });
-    }
-  };
-
   const updateLabel = () => {
     const current = options.find((o) => o.value === value);
     labelSpan.textContent = current?.label ?? "";
-    renderIconInto(leftSlot, current?.icon);
   };
   updateLabel();
 
@@ -919,9 +980,6 @@ function select(options, current, onChange) {
         class: `tsql-select-item${opt.value === value ? " is-selected" : ""}`,
         attrs: { role: "option", "data-value": opt.value },
       });
-      const iconBox = el("span", { class: "tsql-select-item-icon" });
-      renderIconInto(iconBox, opt.icon);
-      item.appendChild(iconBox);
       item.appendChild(el("span", { class: "tsql-select-item-label", text: opt.label }));
       if (opt.value === value) {
         const check = el("span", { class: "tsql-select-item-check" });
@@ -991,6 +1049,17 @@ function formToPersistable(form) {
   return rest;
 }
 
+async function confirmAndDeleteConnection(conn) {
+  const label = conn.name || conn.id;
+  const ok = await openConfirmDialog({
+    title: "Delete connection?",
+    message: `"${label}" will be removed and its stored credentials wiped from the keychain.`,
+    confirmLabel: "Delete",
+  });
+  if (!ok) return;
+  await deleteConnection(conn.id);
+}
+
 async function deleteConnection(id) {
   state.connections = state.connections.filter((c) => c.id !== id);
   await persistConnections();
@@ -1002,6 +1071,68 @@ async function deleteConnection(id) {
   if (state.active === id) state.active = null;
   delete state.sessions[id];
   rerender();
+}
+
+/**
+ * Promise-based confirmation modal that reuses `tsql-overlay` / `tsql-dialog`
+ * so visuals stay consistent with the connection editor. Resolves to `true`
+ * when the user confirms, `false` on cancel / overlay-click / Escape.
+ * The confirm button uses the neutral primary style (matching how the host
+ * AlertDialog wires the default delete action — no destructive red).
+ */
+function openConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel" }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown, true);
+      overlay.remove();
+      resolve(value);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        finish(true);
+      }
+    };
+
+    const overlay = el("div", { class: "tsql-overlay" });
+    const dialog = el("div", { class: "tsql-dialog tsql-dialog-confirm" });
+    dialog.addEventListener("click", (event) => event.stopPropagation());
+    overlay.addEventListener("click", () => finish(false));
+
+    dialog.appendChild(el("h3", { class: "tsql-dialog-title", text: title }));
+    if (message) {
+      dialog.appendChild(el("p", { class: "tsql-dialog-message", text: message }));
+    }
+
+    const actions = el("div", { class: "tsql-dialog-actions" });
+    const cancelBtn = el("button", {
+      class: "tsql-btn",
+      attrs: { type: "button" },
+      text: cancelLabel,
+      on: { click: () => finish(false) },
+    });
+    const confirmBtn = el("button", {
+      class: "tsql-btn is-primary",
+      attrs: { type: "button" },
+      text: confirmLabel,
+      on: { click: () => finish(true) },
+    });
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+
+    const host = panelRoot || document.body;
+    host.appendChild(overlay);
+    document.addEventListener("keydown", onKeyDown, true);
+    requestAnimationFrame(() => confirmBtn.focus());
+  });
 }
 
 function buildUrl(form) {
@@ -1091,6 +1222,9 @@ function ensureSession(id) {
       activeTable: null,
       tableSnapshot: null,
       requestId: null,
+      // Current substring filter on the database tree. Persists across
+      // re-renders so a search-then-switch-tab round trip keeps the filter.
+      dbSearch: "",
     };
   }
   return state.sessions[id];
@@ -1127,11 +1261,34 @@ function renderTreePane(session) {
       iconButton("Refresh01Icon", "Refresh", () => refreshDatabases(session, wrap)),
     ),
   );
+  // Inline search box — filters the database list as the user types.
+  // Stored on the session so re-renders keep the current filter, and so
+  // refresh re-applies the filter against the new list.
+  const search = el("input", {
+    class: "tsql-tree-search",
+    attrs: {
+      type: "search",
+      placeholder: "Search databases…",
+      "aria-label": "Search databases",
+      autocomplete: "off",
+      spellcheck: "false",
+    },
+  });
+  search.value = session.dbSearch ?? "";
+  search.addEventListener("input", () => {
+    session.dbSearch = search.value;
+    applyDbFilter(wrap, session.dbSearch);
+  });
+  wrap.appendChild(search);
   const list = el("ul", { class: "tsql-tree-list" });
   wrap.appendChild(list);
-  loadDatabases(session, list).catch((err) =>
-    safeToast(`Failed to load databases: ${err?.message ?? err}`, "error"),
-  );
+  loadDatabases(session, list)
+    .then(() => {
+      // Re-apply the cached search after the async load so a session
+      // returning to the panel with a pending query immediately filters.
+      if (session.dbSearch) applyDbFilter(wrap, session.dbSearch);
+    })
+    .catch((err) => safeToast(`Failed to load databases: ${err?.message ?? err}`, "error"));
   return wrap;
 }
 
@@ -1140,13 +1297,36 @@ async function refreshDatabases(session, wrap) {
   if (!list) return;
   clearChildren(list);
   await loadDatabases(session, list);
+  applyDbFilter(wrap, session.dbSearch ?? "");
 }
 
 async function loadDatabases(session, list) {
   clearChildren(list);
   const resp = await fetchJson(`/databases?conn=${encodeURIComponent(session.connId)}`);
-  for (const db of resp.databases) {
+  // When the connection pins a `database`, the schema tree shows only that
+  // one — matches the user's "this is the database I care about" intent
+  // from the connection form. Without a pin, list every database the
+  // server exposes.
+  const pinned = (state.connections.find((c) => c.id === session.connId) || {}).database;
+  const databases = pinned
+    ? resp.databases.filter((db) => db.name === pinned)
+    : resp.databases;
+  for (const db of databases) {
     list.appendChild(renderDbNode(session, db.name));
+  }
+}
+
+/** Filter the visible database rows by name. Case-insensitive substring
+ *  match; empty query shows all rows. Children stay attached so toggling
+ *  the row open after a search shows the cached schemas/tables. */
+function applyDbFilter(wrap, query) {
+  const q = (query || "").trim().toLowerCase();
+  const list = wrap.querySelector(".tsql-tree-list");
+  if (!list) return;
+  for (const node of list.querySelectorAll(":scope > .tsql-node-db")) {
+    const label = node.querySelector(".tsql-tree-label");
+    const name = label ? label.textContent.toLowerCase() : "";
+    node.style.display = !q || name.includes(q) ? "" : "none";
   }
 }
 
@@ -2065,31 +2245,28 @@ const STYLES_CSS = `
 /* Responsive 2-pane shell: connection rail + workspace. The rail shrinks
    on narrow windows; below 720 px the connection list collapses into a
    horizontal strip above the workspace. */
-.tsql-body { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
-.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 4px 0; min-width: 0; }
-.tsql-conn-row { display: grid; grid-template-columns: 26px 1fr 22px 22px; gap: 6px; align-items: center; padding: 5px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+.tsql-body { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
+.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 2px 0; min-width: 0; }
+/* Text-only rail row. Name + subtitle on the left, two action buttons
+   on the right. No brand icon column — engine kind reads from the
+   subtitle so the list stays compact and matches TEDI's chrome. */
+.tsql-conn-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px 20px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
 .tsql-conn-row:hover { background: var(--accent, rgba(127,127,127,0.06)); }
 .tsql-conn-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); border-left-color: var(--primary, #3b82f6); }
 
-/* Brand badge: 24-square box, holds the inline SVG mark. Background tint
-   uses the official-ish brand colours so the row reads as MySQL / Postgres /
-   SQLite at a glance without depending on the text. */
-.tsql-conn-kind { width: 24px; height: 24px; border-radius: 6px; color: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
-.tsql-conn-kind svg { width: 18px; height: 18px; }
-.tsql-kind-mysql { background: #00758f; }
-.tsql-kind-postgres { background: #336791; }
-.tsql-kind-sqlite { background: #0f5b8a; }
-
-.tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; line-height: 1.25; }
 .tsql-conn-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-conn-host { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tsql-row-action { width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
+.tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .tsql-row-action:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
 
 /* Workspace: schema tree (auto-shrinking) + editor / results column. */
 .tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
 .tsql-tree { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; min-width: 0; }
 .tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); gap: 8px; }
+.tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 4px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
+.tsql-tree-search:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
+.tsql-tree-search::placeholder { color: var(--muted-foreground); opacity: 0.7; }
 .tsql-tree-list { list-style: none; margin: 0; padding: 4px 0; }
 .tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tsql-tree-node { padding: 0; }
@@ -2140,7 +2317,7 @@ const STYLES_CSS = `
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
 .tsql-grid-actions-col { width: 30px; }
 .tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--primary, #3b82f6); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; }
-.tsql-cell-saved { background: rgba(34, 197, 94, 0.22) !important; transition: background 0.6s ease; }
+.tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
 
 .tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
 .tsql-pager-label { font-size: 11px; color: var(--muted-foreground); min-width: 80px; text-align: center; }
@@ -2148,8 +2325,28 @@ const STYLES_CSS = `
 
 /* Modal dialog. */
 .tsql-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2000; backdrop-filter: blur(2px); }
-.tsql-dialog { background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
+.tsql-dialog { background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
 .tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
+
+/* Connection editor — docked side panel anchored to the right of the
+   workbench. No overlay backdrop (the rail/tree stay interactive) and
+   the title bar is a drag handle so the user can park it where it
+   suits them. Mirrors the host's popover styling (bg-popover + ring-1
+   shadow) so it reads as the same component family as Settings. */
+.tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 40px rgba(0,0,0,0.32), 0 0 0 1px rgba(255,255,255,0.02); overflow: hidden; }
+.tsql-conn-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); cursor: grab; user-select: none; touch-action: none; }
+.tsql-conn-modal-header:active { cursor: grabbing; }
+.tsql-conn-modal-title { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--foreground); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsql-conn-modal-close { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.12s ease, color 0.12s ease; flex-shrink: 0; }
+.tsql-conn-modal-close:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
+.tsql-conn-modal-body { padding: 14px 16px 16px; overflow-y: auto; min-height: 0; }
+.tsql-conn-modal-body .tsql-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Compact confirm modal — title + single message line + actions. Mirrors
+   the host's AlertDialog (default + outline buttons, no destructive red),
+   so a "Delete connection?" prompt reads the same as the SSH manager. */
+.tsql-dialog-confirm { min-width: 320px; max-width: 420px; padding: 18px 20px 16px; }
+.tsql-dialog-confirm .tsql-dialog-title { margin-bottom: 8px; }
+.tsql-dialog-message { margin: 0 0 16px; font-size: 12px; color: var(--muted-foreground); line-height: 1.45; }
 .tsql-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px 14px; }
 .tsql-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--muted-foreground); min-width: 0; }
 .tsql-field.is-full { grid-column: 1 / -1; }
@@ -2160,25 +2357,20 @@ const STYLES_CSS = `
 .tsql-input:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
 .tsql-input::placeholder { color: var(--muted-foreground); opacity: 0.6; }
 /* Custom dropdown — mirrors TEDI Settings DropdownMenu (shadcn /
-   radix-luma): h-9 outline trigger, popup menu rendered into body. */
-.tsql-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; height: 32px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease; min-width: 0; }
-.tsql-select:hover { background: var(--accent, rgba(127,127,127,0.06)); border-color: var(--ring, var(--border)); }
+   radix-luma): outline trigger, popup menu rendered into body. Trigger
+   geometry tracks the settings dropdown (h-9, justify-between, gap-2,
+   px-2.5, text-[12px]); popup uses bg-popover with the same rounded-2xl
+   items so it reads as the same component family. */
+.tsql-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; height: 36px; min-height: 36px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 12px; font-family: inherit; cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease; min-width: 0; }
+.tsql-select:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.06))); border-color: var(--ring, var(--border)); }
 .tsql-select:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
-.tsql-select-left { display: inline-flex; align-items: center; flex-shrink: 0; }
-.tsql-select-left:empty { display: none; }
-.tsql-select-left .tsql-conn-kind { width: 18px; height: 18px; border-radius: 4px; }
-.tsql-select-left .tsql-conn-kind svg { width: 14px; height: 14px; }
-.tsql-select-label { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsql-select-label { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .tsql-select-caret { display: inline-flex; flex-shrink: 0; opacity: 0.7; color: currentColor; transition: transform 0.15s ease; }
 .tsql-select[aria-expanded="true"] .tsql-select-caret { transform: rotate(180deg); }
 
-.tsql-select-menu { list-style: none; margin: 0; padding: 6px; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 14px 32px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.03) inset; max-height: 320px; overflow-y: auto; font-size: 12px; }
-.tsql-select-item { display: flex; align-items: center; gap: 10px; padding: 7px 11px; border-radius: 10px; cursor: pointer; font-weight: 500; color: var(--foreground); user-select: none; transition: background 0.1s ease; }
+.tsql-select-menu { list-style: none; margin: 0; padding: 6px; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 14px 32px rgba(0,0,0,0.22); max-height: 320px; overflow-y: auto; font-size: 12px; min-width: 180px; }
+.tsql-select-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; cursor: pointer; font-weight: 500; color: var(--foreground); user-select: none; transition: background 0.1s ease; }
 .tsql-select-item:hover, .tsql-select-item:focus-visible { background: var(--accent, rgba(127,127,127,0.1)); outline: none; }
-.tsql-select-item-icon { display: inline-flex; align-items: center; flex-shrink: 0; width: 20px; height: 20px; }
-.tsql-select-item-icon:empty { display: none; }
-.tsql-select-item-icon .tsql-conn-kind { width: 20px; height: 20px; border-radius: 4px; }
-.tsql-select-item-icon .tsql-conn-kind svg { width: 14px; height: 14px; }
 .tsql-select-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-select-item-check { margin-left: auto; flex-shrink: 0; color: var(--primary, #3b82f6); }
 .tsql-select-item.is-selected { color: var(--foreground); font-weight: 600; }
@@ -2188,7 +2380,7 @@ const STYLES_CSS = `
 .tsql-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .tsql-table-title { font-weight: 600; color: var(--foreground); }
 .tsql-error-line { color: var(--destructive, #ef4444); font-weight: 600; }
-.tsql-error-text { padding: 10px 12px; background: rgba(239, 68, 68, 0.08); color: var(--destructive, #ef4444); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+.tsql-error-text { padding: 10px 12px; background: color-mix(in srgb, var(--destructive, #ef4444) 8%, transparent); color: var(--destructive, #ef4444); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .tsql-sql-source { padding: 10px 12px; background: var(--accent, rgba(127,127,127,0.06)); color: var(--muted-foreground); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 
 /* Narrow-window adaptations. The connection rail collapses into a single

@@ -2,6 +2,17 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.11 (2026-05-26)
+
+- Search inputs (schema rail "Search databases" + table grid "Search rows")
+  now render the clear (X) button as a HugeIcon (Cancel01Icon) overlaid on
+  the right edge of the input, sharing the same currentColor + hover-bg
+  treatment as iconButton / textBtn / row actions. Replaces the previous
+  browser-native type=search clear, which painted in the OS chrome colour
+  and did not match the workbench icon family. The clear button hides
+  while the input is empty and appears the moment the user types one
+  character; clicking it empties the input and refocuses for fresh input.
+
 ## 0.2.10 (2026-05-26)
 
 Hotfix: the extension failed to activate in 0.2.9 with

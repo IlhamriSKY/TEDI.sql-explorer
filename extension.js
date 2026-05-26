@@ -469,6 +469,63 @@ function iconButton(iconName, title, onClick) {
   return btn;
 }
 
+// Builds a search input with a HugeIcon clear (X) button overlaid on the
+// right. Browser's native `type=search` clear button paints in the user's
+// system colour and doesn't match the host icon family, so we use a
+// `type=text` input + an absolutely-positioned button that shares the
+// HugeIcon palette with iconButton / textBtn / row actions. The clear
+// button hides while the input is empty (no useless X glyph) and shows
+// the moment the user types one character.
+function makeSearchInput({
+  placeholder,
+  ariaLabel,
+  inputClass = "",
+  wrapClass = "",
+  initialValue = "",
+  onInput,
+}) {
+  const wrap = el("div", { class: `tsql-search-wrap ${wrapClass}`.trim() });
+  const input = el("input", {
+    class: inputClass,
+    attrs: {
+      type: "text",
+      placeholder,
+      "aria-label": ariaLabel,
+      autocomplete: "off",
+      spellcheck: "false",
+    },
+  });
+  input.value = initialValue;
+  const clearBtn = el("button", {
+    class: "tsql-search-clear",
+    attrs: {
+      type: "button",
+      "aria-label": "Clear search",
+      title: "Clear",
+      tabindex: "-1",
+    },
+  });
+  appendIcon(clearBtn, "Cancel01Icon", { size: 12 });
+  const sync = () => {
+    clearBtn.classList.toggle("is-visible", Boolean(input.value));
+  };
+  sync();
+  input.addEventListener("input", () => {
+    sync();
+    onInput?.(input.value);
+  });
+  clearBtn.addEventListener("click", () => {
+    if (!input.value) return;
+    input.value = "";
+    sync();
+    onInput?.("");
+    input.focus();
+  });
+  wrap.appendChild(input);
+  wrap.appendChild(clearBtn);
+  return { wrap, input };
+}
+
 // ----------------------------- Connection rail -------------------------------
 
 function renderConnRail() {
@@ -1269,22 +1326,18 @@ function renderTreePane(session) {
   // Inline search box — filters the database list as the user types.
   // Stored on the session so re-renders keep the current filter, and so
   // refresh re-applies the filter against the new list.
-  const search = el("input", {
-    class: "tsql-tree-search",
-    attrs: {
-      type: "search",
-      placeholder: "Search databases…",
-      "aria-label": "Search databases",
-      autocomplete: "off",
-      spellcheck: "false",
+  const { wrap: searchWrap } = makeSearchInput({
+    placeholder: "Search databases…",
+    ariaLabel: "Search databases",
+    inputClass: "tsql-tree-search",
+    wrapClass: "tsql-search-wrap--tree",
+    initialValue: session.dbSearch ?? "",
+    onInput: (val) => {
+      session.dbSearch = val;
+      applyDbFilter(wrap, val);
     },
   });
-  search.value = session.dbSearch ?? "";
-  search.addEventListener("input", () => {
-    session.dbSearch = search.value;
-    applyDbFilter(wrap, session.dbSearch);
-  });
-  head.appendChild(search);
+  head.appendChild(searchWrap);
   wrap.appendChild(head);
   const list = el("ul", { class: "tsql-tree-list" });
   wrap.appendChild(list);
@@ -1740,20 +1793,16 @@ function renderTableGrid(container, session) {
   // narrows the search to a single column (or "All columns" = scan every
   // cell). Sort is server-side (order_by goes to /table-rows) so it
   // applies across pages, not just the visible window.
-  const searchInput = el("input", {
-    class: "tsql-input tsql-grid-search",
-    attrs: {
-      type: "search",
-      placeholder: "Search rows…",
-      "aria-label": "Search rows",
-      autocomplete: "off",
-      spellcheck: "false",
+  const { wrap: searchWrap, input: searchInput } = makeSearchInput({
+    placeholder: "Search rows…",
+    ariaLabel: "Search rows",
+    inputClass: "tsql-input tsql-grid-search",
+    wrapClass: "tsql-search-wrap--grid",
+    initialValue: session.gridSearch ?? "",
+    onInput: (val) => {
+      session.gridSearch = val;
+      applyGridFilter(container, session);
     },
-  });
-  searchInput.value = session.gridSearch ?? "";
-  searchInput.addEventListener("input", () => {
-    session.gridSearch = searchInput.value;
-    applyGridFilter(container, session);
   });
 
   const colSelect = el("select", {
@@ -1784,7 +1833,7 @@ function renderTableGrid(container, session) {
       el(
         "div",
         { class: "tsql-toolbar" },
-        searchInput,
+        searchWrap,
         colSelect,
         textBtn("Row", "Add01Icon", {
           title: "Insert row",
@@ -2413,6 +2462,17 @@ const STYLES_CSS = `
 .tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
 .tsql-tree-search:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
 .tsql-tree-search::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+/* Search input wrapper + HugeIcon clear (X) button. Replaces the native
+   type=search browser X so it paints with the same currentColor + hover
+   bg as the rest of the workbench icon row. */
+.tsql-search-wrap { position: relative; }
+.tsql-search-wrap--tree { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; }
+.tsql-search-wrap--tree > .tsql-tree-search { width: 100%; margin: 0; padding-right: 22px; }
+.tsql-search-wrap--grid { display: inline-flex; align-items: center; width: 160px; }
+.tsql-search-wrap--grid > .tsql-input.tsql-grid-search { width: 100%; padding-right: 22px; }
+.tsql-search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; display: none; align-items: center; justify-content: center; border-radius: 4px; transition: background 0.12s ease, color 0.12s ease; }
+.tsql-search-clear.is-visible { display: inline-flex; }
+.tsql-search-clear:hover { background: var(--accent, rgba(127,127,127,0.12)); color: var(--foreground); }
 .tsql-tree-list { list-style: none; margin: 0; padding: 4px 0; }
 .tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
 .tsql-tree-node { padding: 0; }

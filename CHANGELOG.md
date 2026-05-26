@@ -2,6 +2,25 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.13 (2026-05-26)
+
+- Accordion-style schema tree: expanding a database now auto-collapses
+  every sibling DB so only one is open at a time. Schemas inside the
+  active DB stay independent (so users can compare two schemas at the
+  same time) - the lock is just at the database level. Connections with
+  a pinned database render a single DB node, so behaviour there is
+  unchanged.
+- Query editor autocomplete for tables and columns. As you expand the
+  tree and open tables, the extension fills a per-session schema cache;
+  the query editor pulls matching tables + columns from that cache on
+  every keystroke (case-insensitive prefix match). Tables float to the
+  top of the menu via boost so the first hit after `FROM ` is usually
+  what you wanted; column suggestions include the parent table in the
+  detail column so same-named columns from different tables stay
+  distinguishable. Requires TEDI >= 0.3.3 for the host autocomplete
+  hook (`ctx.ui.codeEditor` completions option); older hosts ignore it
+  silently so the extension still loads.
+
 ## 0.2.12 (2026-05-26)
 
 Workbench layout polish.

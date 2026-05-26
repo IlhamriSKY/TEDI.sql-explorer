@@ -469,6 +469,59 @@ function iconButton(iconName, title, onClick) {
   return btn;
 }
 
+/**
+ * Autocomplete source for the query editor. Walks the per-session schema
+ * cache (populated by `loadTables` and `loadTableRows`) and returns every
+ * table + column whose name starts with `prefix` (case-insensitive).
+ *
+ * Tables float to the top via boost so the first match in `SELECT ... FROM `
+ * is the table the user is most likely after; columns sort after with the
+ * parent table surfaced in `detail` so users picking between same-named
+ * columns (e.g. `id` in two tables) see which is which.
+ *
+ * Identical labels collapse (e.g. MySQL where db == schema, the same
+ * table can appear as `db.db.table` and `db.table`). Dedup is by label
+ * + type so a table and a column sharing a name both stay visible.
+ */
+function buildSchemaCompletions(session, prefix) {
+  const cache = session?.schemaCache;
+  if (!cache || cache.size === 0) return [];
+  const needle = (prefix || "").toLowerCase();
+  const out = [];
+  const seen = new Set();
+  const push = (key, item) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  };
+  for (const entry of cache.values()) {
+    const tableName = entry.table;
+    if (tableName && (!needle || tableName.toLowerCase().startsWith(needle))) {
+      const qualifier =
+        entry.database === entry.schema
+          ? entry.database
+          : `${entry.database}.${entry.schema}`;
+      push(`t:${tableName}`, {
+        label: tableName,
+        detail: qualifier,
+        type: entry.kind === "view" ? "interface" : "type",
+        boost: 10,
+      });
+    }
+    for (const col of entry.columns) {
+      if (!needle || col.toLowerCase().startsWith(needle)) {
+        push(`c:${col}:${tableName}`, {
+          label: col,
+          detail: tableName,
+          type: "property",
+          boost: 0,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // Builds a search input with a HugeIcon clear (X) button overlaid on the
 // right. Browser's native `type=search` clear button paints in the user's
 // system colour and doesn't match the host icon family, so we use a
@@ -1282,8 +1335,18 @@ function ensureSession(id) {
       // Current substring filter on the database tree. Persists across
       // re-renders so a search-then-switch-tab round trip keeps the filter.
       dbSearch: "",
+      // Cache for the autocomplete source in the query editor. Keyed by
+      // `database.schema.table` so MySQL (db == schema) and PostgreSQL
+      // (db > schema) both collapse to a stable identifier. `columns` is
+      // populated lazily when the user opens the table grid; tables alone
+      // are populated when their parent DB / schema is expanded in the
+      // tree. The completion provider walks every entry on every keystroke.
+      schemaCache: new Map(),
     };
   }
+  // schemaCache was added after some sessions might already exist; backfill
+  // so older entries don't crash the completion source on first keystroke.
+  if (!state.sessions[id].schemaCache) state.sessions[id].schemaCache = new Map();
   return state.sessions[id];
 }
 
@@ -1412,6 +1475,21 @@ function renderDbNode(session, dbName) {
   let loaded = false;
   head.addEventListener("click", async () => {
     const open = childList.style.display !== "none";
+    // Accordion: opening a database collapses every sibling DB so only
+    // one is active at a time. Connections with a pinned database render
+    // a single DB node, so this loop is a no-op there.
+    if (!open) {
+      const parent = li.parentElement;
+      if (parent) {
+        for (const sib of parent.querySelectorAll(":scope > .tsql-node-db")) {
+          if (sib === li) continue;
+          const sCaret = sib.querySelector(":scope > .tsql-tree-row > .tsql-caret");
+          const sList = sib.querySelector(":scope > .tsql-tree-children");
+          if (sList && sList.style.display !== "none") sList.style.display = "none";
+          if (sCaret) sCaret.classList.remove("is-open");
+        }
+      }
+    }
     childList.style.display = open ? "none" : "";
     caretBox.classList.toggle("is-open", !open);
     if (!loaded && !open) {
@@ -1485,6 +1563,17 @@ async function loadTables(session, database, schema, parent) {
     return;
   }
   for (const t of resp.tables) {
+    // Seed the autocomplete cache with the table identity. Columns get
+    // filled in when the user actually opens the table grid (lazy).
+    const key = `${database}.${schema}.${t.name}`;
+    const prev = session.schemaCache.get(key);
+    session.schemaCache.set(key, {
+      database,
+      schema,
+      table: t.name,
+      kind: t.kind,
+      columns: prev?.columns ?? [],
+    });
     parent.appendChild(renderTableNode(session, database, schema, t));
   }
 }
@@ -1596,6 +1685,11 @@ function renderEditorAndResults(session) {
         session.sql = v;
       },
       onCmdEnter: () => runActiveQuery(),
+      // Walks the schema cache (populated as the user expands the tree /
+      // opens table grids) and returns matching tables + columns. Older
+      // TEDI hosts (<0.3.3) ignore this field, so the extension still
+      // loads but the popup never appears - by design.
+      completions: (prefix) => buildSchemaCompletions(session, prefix),
     });
   } catch (err) {
     ctx?.logger?.error?.("codeEditor mount failed", err);
@@ -1818,6 +1912,20 @@ async function loadTableRows(session, page) {
   try {
     const resp = await fetchJson("/table-rows", { method: "POST", body });
     session.tableSnapshot = resp.result;
+    // Update the autocomplete cache with the columns we just learned.
+    // Subsequent keystrokes in the query editor immediately see them.
+    if (resp.result?.columns?.length) {
+      const t = session.activeTable;
+      const key = `${t.database}.${t.schema}.${t.table}`;
+      const prev = session.schemaCache.get(key);
+      session.schemaCache.set(key, {
+        database: t.database,
+        schema: t.schema,
+        table: t.table,
+        kind: prev?.kind ?? "table",
+        columns: resp.result.columns.slice(),
+      });
+    }
     if (!panelRoot) return;
     const root = panelRoot.querySelector("[data-results-root]");
     if (root) renderTableGrid(root, session);

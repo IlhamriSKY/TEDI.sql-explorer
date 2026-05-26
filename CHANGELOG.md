@@ -2,6 +2,35 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.9 (2026-05-26)
+
+UI polish around connection editor, schema tree, and the row grid.
+
+- Delete row now opens the styled confirm modal (Esc / Enter / overlay
+  click) instead of the browser's native `confirm()`. Consistent with
+  the existing "Delete connection" flow.
+- Connection editor modal restyled to match the host Settings window:
+  brand `--primary` outline + 0.5rem radius + faded card-tinted header.
+  The border uses `outline` + negative offset so it survives WebView2
+  edge clipping on Windows resize.
+- Connection rail loses its top padding so the first row sits flush
+  under the SQL Explorer header.
+- Schema search input + subheader are pinned in a sticky wrapper, so
+  they stay visible while the database tree scrolls.
+- Data table goes monochromatic. Bool values + cell-edit input border
+  drop the `--primary` blue and use `--foreground` instead; zebra rows
+  and hover state use `color-mix(foreground, transparent)` so both
+  dark and light themes get a clean shade pair with no accent hue.
+- Sortable column headers: click a TH to cycle unset → asc → desc →
+  unset. `order_by` + `order_dir` flow to `/table-rows`, so the sort
+  applies across pages, not just the visible window. ▲ / ▼ indicator
+  on the active column.
+- In-grid search + column filter. The toolbar gets a search input plus
+  a column dropdown ("All columns" or one specific column). Filtering
+  is client-side over the loaded snapshot (so it's instant and
+  doesn't widen the sidecar API surface). State persists across page
+  changes / reloads / sort flips.
+
 ## 0.2.8 (2026-05-26)
 
 Identifier handling + UI polish.

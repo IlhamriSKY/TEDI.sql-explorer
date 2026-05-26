@@ -1253,7 +1253,12 @@ function renderWorkspace() {
 
 function renderTreePane(session) {
   const wrap = el("div", { class: "tsql-tree" });
-  wrap.appendChild(
+  // Pin the subheader + search input so they stay visible while the
+  // database tree scrolls underneath. Single sticky wrapper carries the
+  // card-tinted background + bottom border so the rows scrolling below
+  // don't bleed through the search input's transparent edge gutters.
+  const head = el("div", { class: "tsql-tree-head" });
+  head.appendChild(
     el(
       "header",
       { class: "tsql-subheader" },
@@ -1279,7 +1284,8 @@ function renderTreePane(session) {
     session.dbSearch = search.value;
     applyDbFilter(wrap, session.dbSearch);
   });
-  wrap.appendChild(search);
+  head.appendChild(search);
+  wrap.appendChild(head);
   const list = el("ul", { class: "tsql-tree-list" });
   wrap.appendChild(list);
   loadDatabases(session, list)
@@ -1684,6 +1690,13 @@ function cellTooltip(value) {
 async function openTable(session, target, scrollIntoView = false) {
   session.activeTable = target;
   session.tableSnapshot = null;
+  // Per-table grid state. Cleared on switch so the new table opens
+  // unsorted with empty filter, rather than inheriting state from the
+  // previous one (which would pass an order_by column that doesn't exist).
+  session.orderBy = null;
+  session.orderDir = "asc";
+  session.gridSearch = "";
+  session.gridSearchCol = "";
   await loadTableRows(session, 0);
   if (panelRoot && scrollIntoView) {
     panelRoot.querySelector("[data-results-root]")?.scrollIntoView({ block: "start" });
@@ -1700,6 +1713,10 @@ async function loadTableRows(session, page) {
     page,
     page_size: 100,
   };
+  if (session.orderBy) {
+    body.order_by = session.orderBy;
+    body.order_dir = session.orderDir === "desc" ? "desc" : "asc";
+  }
   try {
     const resp = await fetchJson("/table-rows", { method: "POST", body });
     session.tableSnapshot = resp.result;
@@ -1719,6 +1736,41 @@ function renderTableGrid(container, session) {
     container.appendChild(el("p", { class: "tsql-empty", text: "Loading…" }));
     return;
   }
+  // Search input filters loaded rows client-side. The column select
+  // narrows the search to a single column (or "All columns" = scan every
+  // cell). Sort is server-side (order_by goes to /table-rows) so it
+  // applies across pages, not just the visible window.
+  const searchInput = el("input", {
+    class: "tsql-input tsql-grid-search",
+    attrs: {
+      type: "search",
+      placeholder: "Search rows…",
+      "aria-label": "Search rows",
+      autocomplete: "off",
+      spellcheck: "false",
+    },
+  });
+  searchInput.value = session.gridSearch ?? "";
+  searchInput.addEventListener("input", () => {
+    session.gridSearch = searchInput.value;
+    applyGridFilter(container, session);
+  });
+
+  const colSelect = el("select", {
+    class: "tsql-grid-colfilter",
+    attrs: { "aria-label": "Filter column" },
+  });
+  colSelect.appendChild(el("option", { attrs: { value: "" }, text: "All columns" }));
+  for (const col of snap.columns) {
+    const opt = el("option", { attrs: { value: col }, text: col });
+    if (col === session.gridSearchCol) opt.selected = true;
+    colSelect.appendChild(opt);
+  }
+  colSelect.addEventListener("change", () => {
+    session.gridSearchCol = colSelect.value;
+    applyGridFilter(container, session);
+  });
+
   container.appendChild(
     el(
       "header",
@@ -1732,6 +1784,8 @@ function renderTableGrid(container, session) {
       el(
         "div",
         { class: "tsql-toolbar" },
+        searchInput,
+        colSelect,
         textBtn("Row", "Add01Icon", {
           title: "Insert row",
           onClick: () => openInsertDialog(session),
@@ -1759,7 +1813,37 @@ function renderTableGrid(container, session) {
   const thead = el("thead");
   const headRow = el("tr");
   headRow.appendChild(el("th", { class: "tsql-grid-actions-col", text: "" }));
-  for (const col of snap.columns) headRow.appendChild(el("th", { text: col }));
+  for (const col of snap.columns) {
+    const isSorted = session.orderBy === col;
+    const dir = session.orderDir === "desc" ? "desc" : "asc";
+    const th = el("th", {
+      class: `tsql-grid-th${isSorted ? ` is-sort-${dir}` : ""}`,
+      attrs: { title: `Sort by ${col}` },
+    });
+    th.appendChild(document.createTextNode(col));
+    // Three-state cycle: unset -> asc -> desc -> unset. Triggers a
+    // server reload so order_by applies across all pages, not just the
+    // current snapshot.
+    th.addEventListener("click", () => {
+      if (session.orderBy === col) {
+        if (session.orderDir === "asc") session.orderDir = "desc";
+        else {
+          session.orderBy = null;
+          session.orderDir = "asc";
+        }
+      } else {
+        session.orderBy = col;
+        session.orderDir = "asc";
+      }
+      loadTableRows(session, 0);
+    });
+    const arrow = el("span", {
+      class: "tsql-sort-arrow",
+      text: isSorted ? (dir === "asc" ? "▲" : "▼") : "",
+    });
+    th.appendChild(arrow);
+    headRow.appendChild(th);
+  }
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = el("tbody");
@@ -1783,6 +1867,56 @@ function renderTableGrid(container, session) {
   container.appendChild(wrap);
 
   container.appendChild(renderPager(session, snap));
+
+  // Re-apply persisted search/filter after the DOM rebuild so the row
+  // visibility survives reloads (page change, reload, sort flip).
+  applyGridFilter(container, session);
+}
+
+/** Hide tbody rows that don't match the current search query. When
+ *  `gridSearchCol` is set the substring match is restricted to that
+ *  one column; otherwise every cell in the row is scanned. Operates on
+ *  the loaded snapshot only — server-side WHERE is intentionally
+ *  avoided to keep the sidecar API surface flat. */
+function applyGridFilter(rootEl, session) {
+  const snap = session.tableSnapshot;
+  if (!snap) return;
+  const tbody = rootEl.querySelector(".tsql-grid tbody");
+  if (!tbody) return;
+  const q = (session.gridSearch || "").trim().toLowerCase();
+  const col = session.gridSearchCol || "";
+  const colIdx = col ? snap.columns.indexOf(col) : -1;
+  const trs = tbody.querySelectorAll(":scope > tr");
+  trs.forEach((tr, ri) => {
+    if (!q) {
+      tr.style.display = "";
+      return;
+    }
+    const cells = snap.rows[ri];
+    if (!cells) {
+      tr.style.display = "";
+      return;
+    }
+    let match;
+    if (colIdx >= 0) {
+      match = cellMatchesQuery(cells[colIdx], q);
+    } else {
+      match = cells.some((c) => cellMatchesQuery(c, q));
+    }
+    tr.style.display = match ? "" : "none";
+  });
+}
+
+function cellMatchesQuery(value, q) {
+  if (value == null) return false;
+  let text;
+  if (typeof value === "object") {
+    if (value.__type === "bytes") text = `${value.size ?? ""} bytes`;
+    else text = JSON.stringify(value);
+  } else {
+    text = String(value);
+  }
+  return text.toLowerCase().includes(q);
 }
 
 function rowActionsCell(session, rowIdx) {
@@ -1937,7 +2071,14 @@ async function deleteRowFromGrid(session, rowIdx) {
     }
     pkMap[pk] = snap.rows[rowIdx][idx];
   }
-  if (!confirm(`Delete row where ${pks.map((k) => `${k}=${pkMap[k]}`).join(", ")} ?`)) return;
+  const pkSummary = pks.map((k) => `${k} = ${pkMap[k]}`).join(", ");
+  const ok = await openConfirmDialog({
+    title: "Delete row?",
+    message: `This will delete the row where ${pkSummary}. This action can't be undone.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+  });
+  if (!ok) return;
   try {
     await fetchJson("/table-delete", {
       method: "POST",
@@ -2246,7 +2387,7 @@ const STYLES_CSS = `
    on narrow windows; below 720 px the connection list collapses into a
    horizontal strip above the workspace. */
 .tsql-body { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
-.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 2px 0; min-width: 0; }
+.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 0 0 2px; min-width: 0; }
 /* Text-only rail row. Name + subtitle on the left, two action buttons
    on the right. No brand icon column — engine kind reads from the
    subtitle so the list stays compact and matches TEDI's chrome. */
@@ -2263,8 +2404,13 @@ const STYLES_CSS = `
 /* Workspace: schema tree (auto-shrinking) + editor / results column. */
 .tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
 .tsql-tree { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; min-width: 0; }
+/* Sticky head holds the "Schema" subheader + search input. Pinning the
+   wrapper (not the children individually) keeps the input's horizontal
+   margin gutters opaque so rows scrolling under it don't show through. */
+.tsql-tree-head { position: sticky; top: 0; z-index: 2; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.tsql-tree-head .tsql-subheader { border-bottom: 0; }
 .tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); gap: 8px; }
-.tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 4px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
+.tsql-tree-search { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 6px 8px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 11px; font-family: inherit; }
 .tsql-tree-search:focus { outline: none; border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6); }
 .tsql-tree-search::placeholder { color: var(--muted-foreground); opacity: 0.7; }
 .tsql-tree-list { list-style: none; margin: 0; padding: 4px 0; }
@@ -2309,14 +2455,34 @@ const STYLES_CSS = `
 .tsql-grid-wrap.is-editable { border-top: 1px solid var(--border); }
 .tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
 .tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; box-shadow: 0 1px 0 0 var(--border); user-select: none; }
+/* Sortable header: click cycles unset -> asc -> desc -> unset. The
+   arrow span sits at the end of the cell; empty text reserves nothing
+   so unsorted headers stay flush. */
+.tsql-grid thead th.tsql-grid-th { cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
+.tsql-grid thead th.tsql-grid-th:hover { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 6%, var(--card, var(--background))); }
+.tsql-grid thead th.tsql-grid-th.is-sort-asc, .tsql-grid thead th.tsql-grid-th.is-sort-desc { color: var(--foreground); }
+.tsql-sort-arrow { display: inline-block; margin-left: 6px; font-size: 9px; line-height: 1; color: var(--muted-foreground); }
+.tsql-grid-th.is-sort-asc .tsql-sort-arrow, .tsql-grid-th.is-sort-desc .tsql-sort-arrow { color: var(--foreground); }
+/* Toolbar search + column-filter controls. Sit ahead of the action
+   buttons; widths are compact so the toolbar stays single-row on
+   typical widths and wraps gracefully when narrow. */
+.tsql-input.tsql-grid-search { width: 160px; padding: 4px 8px; font-size: 11px; height: 26px; }
+.tsql-input.tsql-grid-search:focus { border-color: var(--foreground); box-shadow: none; }
+.tsql-grid-colfilter { padding: 3px 6px; font-size: 11px; height: 26px; max-width: 140px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-family: inherit; }
+.tsql-grid-colfilter:focus { outline: none; border-color: var(--foreground); }
 .tsql-grid tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-.tsql-grid tbody tr:nth-child(even) td { background: var(--accent, rgba(127,127,127,0.025)); }
-.tsql-grid tbody tr:hover td { background: var(--accent, rgba(127,127,127,0.08)); }
+/* Zebra stripes use foreground tint at low alpha so dark/light themes
+   both get a clean shade pair without leaning into any accent hue. */
+.tsql-grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+.tsql-grid tbody tr:hover td { background: color-mix(in srgb, var(--foreground) 9%, transparent); }
 .tsql-cell-null { color: var(--muted-foreground); font-style: italic; opacity: 0.7; }
-.tsql-cell-bool { color: var(--primary, #3b82f6); font-weight: 600; }
+/* Monochromatic table palette — no brand-blue accents inside the grid.
+   Bool values use plain foreground weight; the cell-edit input uses the
+   strongest neutral border so it still pops without introducing color. */
+.tsql-cell-bool { color: var(--foreground); font-weight: 600; }
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
 .tsql-grid-actions-col { width: 30px; }
-.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--primary, #3b82f6); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; }
+.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; }
 .tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
 
 .tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
@@ -2329,12 +2495,14 @@ const STYLES_CSS = `
 .tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
 
 /* Connection editor — docked side panel anchored to the right of the
-   workbench. No overlay backdrop (the rail/tree stay interactive) and
-   the title bar is a drag handle so the user can park it where it
-   suits them. Mirrors the host's popover styling (bg-popover + ring-1
-   shadow) so it reads as the same component family as Settings. */
-.tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 40px rgba(0,0,0,0.32), 0 0 0 1px rgba(255,255,255,0.02); overflow: hidden; }
-.tsql-conn-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--border); background: var(--card, var(--background)); cursor: grab; user-select: none; touch-action: none; }
+   workbench. No overlay backdrop (rail/tree stay interactive); the
+   title bar is a drag handle. Visuals mirror the standalone Settings
+   window: brand `--primary` accent outline + 0.5rem corners + faded
+   card-tinted header. The border uses `outline` + negative offset (not
+   `border`) so it survives WebView2 edge clipping on Windows resize,
+   matching the trick `#settings-root` uses in globals.css. */
+.tsql-conn-modal { position: absolute; display: flex; flex-direction: column; max-width: calc(100% - 32px); max-height: calc(100% - 32px); background: var(--background); color: var(--popover-foreground, var(--foreground)); border-radius: 0.5rem; outline: 1px solid var(--primary); outline-offset: -1px; box-shadow: 0 18px 40px rgba(0,0,0,0.32); overflow: hidden; }
+.tsql-conn-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); background: color-mix(in srgb, var(--card, var(--background)) 60%, transparent); cursor: grab; user-select: none; touch-action: none; }
 .tsql-conn-modal-header:active { cursor: grabbing; }
 .tsql-conn-modal-title { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--foreground); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-conn-modal-close { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.12s ease, color 0.12s ease; flex-shrink: 0; }

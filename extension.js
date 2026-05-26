@@ -2730,7 +2730,7 @@ const STYLES_CSS = `
 /* Search input wrapper + HugeIcon clear (X) button. Replaces the native
    type=search browser X so it paints with the same currentColor + hover
    bg as the rest of the workbench icon row. The wrap is always
-   `position: relative` so the absolutely-positioned X stays anchored
+   position:relative so the absolutely-positioned X stays anchored
    to the input's right edge regardless of variant. */
 .tsql-search-wrap { position: relative; display: block; box-sizing: border-box; }
 .tsql-search-wrap--tree { width: calc(100% - 16px); margin: 6px 8px 0; }

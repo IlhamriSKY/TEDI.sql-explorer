@@ -2,6 +2,15 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.16 (2026-05-26)
+
+- Fix: 0.2.15 activation crash. A CSS comment inside the STYLES_CSS
+  template literal referenced `position: relative` with literal
+  backticks, which closed the template early and made the JS parser
+  choke on the following text ("Unexpected identifier 'position'").
+  Replaced with plain text so the comment stays informative without
+  breaking the template. Same class of bug as v0.2.10.
+
 ## 0.2.15 (2026-05-26)
 
 Form chrome aligned with TEDI host, autocomplete now covers SQL syntax.

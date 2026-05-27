@@ -2,6 +2,32 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.23 (2026-05-28)
+
+- Feat: query-result grid is paginated client-side (100 rows per page)
+  so a SELECT that returns the full row_limit no longer paints
+  thousands of <tr> at once. DOM stays small; pager (prev / next /
+  "from-to / total") sits in the meta bar.
+- Feat: HeidiSQL-style client-side search across the result rows.
+  Substring match against every visible cell, debounced 160 ms. The
+  table viewer keeps its existing server-side search via /table-rows
+  (filter applies across the entire table, not just the loaded page).
+- Feat: every result now carries an inline preview of the SQL that
+  produced it, between the meta bar and the table. Single-line, full
+  text in the title tooltip. Helps when a result lingers after the
+  editor buffer was edited, and surfaces the sidecar-generated
+  statement for table-viewer rows.
+- Style: result-tab badges simplified to "{N} rows / {affected} / {ms}".
+  Dropped the "#1" prefix. Single-statement runs (the common case) no
+  longer show a tab strip at all; the meta bar carries the count +
+  duration on its own.
+- Style: splitter between editor and results now matches the host's
+  PaneTreeView resize handle (bg-border/50, hover bg-primary/50 on the
+  line; thicker grip in the centre). Same look and feel as the
+  terminal / editor pane separators.
+- Style: divider between the meta / search toolbar and the sticky
+  table header so the two sections read as distinct bands.
+
 ## 0.2.22 (2026-05-27)
 
 - Fix: MySQL "USE \`db\`" no longer fails with error 1295 ("not supported

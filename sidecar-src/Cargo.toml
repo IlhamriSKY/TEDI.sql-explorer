@@ -1,6 +1,6 @@
 [package]
 name = "tedi-sql-helper"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Sidecar SQL gateway for the tedi.sql-explorer extension (MySQL / PostgreSQL / SQLite)"
 license = "Apache-2.0"

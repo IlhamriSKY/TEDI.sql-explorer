@@ -91,14 +91,21 @@ export async function activate(context) {
 
   // Open or focus the workspace tab. Tabs reuse on identical reuseKey
   // so the user doesn't end up with N copies of the workbench. We also
-  // collapse the left sidebar (file explorer + SCM) so the workbench
-  // gets the full workspace width on open; the user can re-expand it
-  // from the header toggle whenever they want it back.
+  // collapse both sidebars (left file explorer + right AI/aux column)
+  // so the workbench gets the full workspace width on open; the user
+  // can re-expand either side from the header toggle whenever they
+  // want it back. The right-sidebar API is only on hosts >= 0.3.5;
+  // older hosts safely fall through the optional-chain.
   function openWorkbenchTab() {
     try {
       ctx.app?.setSidebarVisible?.(false);
     } catch (err) {
       ctx?.logger?.warn?.("sidebar collapse failed", err);
+    }
+    try {
+      ctx.app?.setRightSidebarVisible?.(false);
+    } catch (err) {
+      ctx?.logger?.warn?.("right sidebar collapse failed", err);
     }
     try {
       ctx.tabs.openExtensionTab({
@@ -701,9 +708,15 @@ const KIND_LABEL = {
   sqlite: "SQLite",
 };
 
-function rowActionBtn(iconName, title, onClick) {
+function rowActionBtn(iconName, title, onClick, opts = {}) {
+  // `danger` paints the trash / delete affordance in --destructive with
+  // a red-tinted hover bg, matching the host's
+  // `text-muted-foreground hover:bg-destructive/10 hover:text-destructive`
+  // pattern used across Settings / WorkspacesPanel / ExplorerGrep so
+  // delete actions read the same everywhere in TEDI.
+  const cls = `tsql-row-action${opts.danger ? " is-danger" : ""}`;
   const btn = el("button", {
-    class: "tsql-row-action",
+    class: cls,
     attrs: { title, "aria-label": title, type: "button" },
     on: { click: onClick },
   });
@@ -731,10 +744,15 @@ function renderConnRow(c) {
       event.stopPropagation();
       void openConnectionDialog(c);
     }),
-    rowActionBtn("Delete02Icon", "Delete connection", (event) => {
-      event.stopPropagation();
-      void confirmAndDeleteConnection(c);
-    }),
+    rowActionBtn(
+      "Delete02Icon",
+      "Delete connection",
+      (event) => {
+        event.stopPropagation();
+        void confirmAndDeleteConnection(c);
+      },
+      { danger: true },
+    ),
   );
 }
 
@@ -1258,6 +1276,7 @@ async function confirmAndDeleteConnection(conn) {
     title: "Delete connection?",
     message: `"${label}" will be removed and its stored credentials wiped from the keychain.`,
     confirmLabel: "Delete",
+    destructive: true,
   });
   if (!ok) return;
   await deleteConnection(conn.id);
@@ -1280,10 +1299,18 @@ async function deleteConnection(id) {
  * Promise-based confirmation modal that reuses `tsql-overlay` / `tsql-dialog`
  * so visuals stay consistent with the connection editor. Resolves to `true`
  * when the user confirms, `false` on cancel / overlay-click / Escape.
- * The confirm button uses the neutral primary style (matching how the host
- * AlertDialog wires the default delete action — no destructive red).
+ * The confirm button defaults to the primary style; pass `destructive: true`
+ * to flip it to the host's red destructive chrome (matches the
+ * `AlertDialogAction variant="destructive"` pattern used in
+ * SourceControlPanel.tsx).
  */
-function openConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel" }) {
+function openConfirmDialog({
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  destructive = false,
+}) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -1321,7 +1348,7 @@ function openConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLab
       on: { click: () => finish(false) },
     });
     const confirmBtn = el("button", {
-      class: "tsql-btn is-primary",
+      class: `tsql-btn ${destructive ? "is-destructive" : "is-primary"}`,
       attrs: { type: "button" },
       text: confirmLabel,
       on: { click: () => finish(true) },
@@ -1440,7 +1467,178 @@ function ensureSession(id) {
   // schemaCache was added after some sessions might already exist; backfill
   // so older entries don't crash the completion source on first keystroke.
   if (!state.sessions[id].schemaCache) state.sessions[id].schemaCache = new Map();
+  // Tree navigation registries. Wiped on every rerender (renderWorkspace
+  // calls clearTreeRegistry); rebuilt as the renderer walks DB / schema /
+  // table rows. Lets the SQL-driven tree sync open a DB or scroll a table
+  // into view without re-querying the DOM each time.
+  if (!state.sessions[id].dbHandles) state.sessions[id].dbHandles = new Map();
+  if (!state.sessions[id].schemaHandles) state.sessions[id].schemaHandles = new Map();
+  if (!state.sessions[id].tableHandles) state.sessions[id].tableHandles = new Map();
   return state.sessions[id];
+}
+
+function clearTreeRegistry(session) {
+  session.dbHandles?.clear();
+  session.schemaHandles?.clear();
+  session.tableHandles?.clear();
+}
+
+function tableHandleKey(database, schema, table) {
+  return `${database} ${schema} ${table}`.toLowerCase();
+}
+
+// ----------------------------- SQL → tree sync -------------------------------
+
+/**
+ * Extracts table identifiers from the free-form SQL the user is typing.
+ * Strips comments and string literals first so a `'-- foo'` or `'INTO bar'`
+ * inside a string doesn't fire a false match. Recognises the usual table
+ * positions: FROM, JOIN (all variants), UPDATE, INSERT INTO, DELETE FROM,
+ * TRUNCATE, CREATE/ALTER/DROP TABLE. Identifiers may be quoted (` " [ ])
+ * and may carry up to two qualifiers (`db.schema.table`).
+ *
+ * Returns `[{ raw, parts: [..lower] }]` — the caller resolves each ref
+ * against `session.schemaCache`.
+ */
+function parseSqlReferences(sql) {
+  if (!sql) return [];
+  let clean = String(sql);
+  // Strip comments before strings; a `--` inside a string literal isn't
+  // actually a comment, but stripping strings first would chew up that
+  // literal anyway, so order is mostly cosmetic for the regex output.
+  clean = clean.replace(/--[^\r\n]*/g, " ");
+  clean = clean.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // Strip string literals so a `WHERE name = 'FROM users'` doesn't trip.
+  clean = clean.replace(/'(?:''|[^'])*'/g, "''");
+  // Double-quoted strings are ambiguous (Postgres treats them as identifiers,
+  // MySQL as strings). We keep them so qualified `"db"."table"` survives.
+  // Match keyword(s) + qualified identifier. Identifier tokens accept the
+  // four common quoting styles. {0,2} caps qualifier depth at three (db.
+  // schema.table).
+  const ident = `(?:\`[^\`]+\`|"[^"]+"|\\[[^\\]]+\\]|[A-Za-z_][\\w$]*)`;
+  const re = new RegExp(
+    `\\b(?:FROM|JOIN|UPDATE|INTO|DELETE\\s+FROM|TRUNCATE(?:\\s+TABLE)?|(?:CREATE|ALTER|DROP)\\s+TABLE)\\b\\s+(${ident}(?:\\s*\\.\\s*${ident}){0,2})`,
+    "gi",
+  );
+  const out = [];
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(clean)) !== null) {
+    const raw = m[1].trim();
+    const parts = raw
+      .split(/\s*\.\s*/)
+      .map((p) => p.replace(/^[`"[]|[`"\]]$/g, ""))
+      .map((p) => p.toLowerCase());
+    const key = parts.join(".");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ raw, parts });
+  }
+  return out;
+}
+
+/** Resolves a list of parsed references against the session's schema
+ *  cache. Returns the best matching cache entry, or `null` if nothing
+ *  matches. Preference order:
+ *    1. Fully-qualified `db.schema.table` matches the input qualifiers
+ *    2. Two-part input matches by `db` OR `schema`
+ *    3. Bare table name — first cached entry wins, but with a bias toward
+ *       the session's currently-expanded database so a user typing
+ *       `users` against an already-expanded `app` DB resolves to `app`'s
+ *       users table, not some other DB's. */
+function findCachedMatch(session, refs) {
+  const cache = session?.schemaCache;
+  if (!cache || cache.size === 0) return null;
+  const current = (session.currentDatabase || "").toLowerCase();
+  for (const ref of refs) {
+    const tableName = ref.parts[ref.parts.length - 1];
+    if (!tableName) continue;
+    const candidates = [];
+    for (const entry of cache.values()) {
+      if ((entry.table || "").toLowerCase() === tableName) candidates.push(entry);
+    }
+    if (candidates.length === 0) continue;
+    if (ref.parts.length >= 3) {
+      const [db, sch] = ref.parts;
+      const exact = candidates.find(
+        (e) => (e.database || "").toLowerCase() === db && (e.schema || "").toLowerCase() === sch,
+      );
+      if (exact) return exact;
+    }
+    if (ref.parts.length === 2) {
+      const qual = ref.parts[0];
+      const exact = candidates.find(
+        (e) => (e.database || "").toLowerCase() === qual || (e.schema || "").toLowerCase() === qual,
+      );
+      if (exact) return exact;
+    }
+    if (current) {
+      const inCurrent = candidates.find((e) => (e.database || "").toLowerCase() === current);
+      if (inCurrent) return inCurrent;
+    }
+    return candidates[0];
+  }
+  return null;
+}
+
+let treeSyncTimer = null;
+function scheduleTreeSync(session) {
+  if (treeSyncTimer) clearTimeout(treeSyncTimer);
+  treeSyncTimer = setTimeout(() => {
+    treeSyncTimer = null;
+    syncTreeToSql(session).catch((err) => ctx?.logger?.warn?.("tree sync failed", err));
+  }, 280);
+}
+
+async function syncTreeToSql(session) {
+  if (!session || !panelRoot) return;
+  // The user may have switched connections during the debounce; the
+  // session's DOM handles are detached at that point. Bail rather than
+  // mutate an offscreen tree.
+  if (state.active !== session.connId) return;
+  const refs = parseSqlReferences(session.sql);
+  if (refs.length === 0) return;
+  const match = findCachedMatch(session, refs);
+  if (!match) return;
+  // Pop the matching DB open (collapses siblings via the accordion logic
+  // inside dbHandles.open). Then walk the loaded child tree to find the
+  // table row. Schemas inside the DB are lazy too, so we await the schema
+  // expand before we look for the table row.
+  const db = session.dbHandles?.get(match.database);
+  if (db) {
+    await db.open();
+  }
+  const key = tableHandleKey(match.database, match.schema, match.table);
+  let rowHandle = session.tableHandles?.get(key);
+  if (!rowHandle) {
+    // Tables aren't loaded yet for this schema; the DB's open() above
+    // populated single-schema DBs but a multi-schema DB still needs the
+    // matching schema row expanded. Look for the schema handle and click.
+    const schemaKey = `${match.database.toLowerCase()} ${match.schema.toLowerCase()}`;
+    const sch = session.schemaHandles?.get(schemaKey);
+    if (sch) {
+      await sch.open();
+      rowHandle = session.tableHandles?.get(key);
+    }
+  }
+  if (rowHandle?.row) highlightTableRow(rowHandle.row);
+}
+
+function highlightTableRow(row) {
+  if (!row) return;
+  // Clear any prior highlight so only the latest match pulses. The
+  // `.is-target` class drives a subtle accent tint via the stylesheet;
+  // the row scrolls into view first so the pulse is actually visible
+  // when the editor sits below the tree on narrow widths.
+  panelRoot
+    ?.querySelectorAll(".tsql-tree-row.is-target")
+    .forEach((r) => r.classList.remove("is-target"));
+  row.classList.add("is-target");
+  try {
+    row.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  } catch {
+    row.scrollIntoView();
+  }
 }
 
 // ----------------------------- Workspace -------------------------------------
@@ -1465,6 +1663,10 @@ function renderWorkspace() {
 // ----------------------------- Tree pane -------------------------------------
 
 function renderTreePane(session) {
+  // Tree DOM is reconstructed on every rerender; wipe the navigation
+  // registry so stale element refs from the previous pass don't survive
+  // and crash the SQL-driven sync.
+  clearTreeRegistry(session);
   const wrap = el("div", { class: "tsql-tree" });
   // Pin the subheader + search input so they stay visible while the
   // database tree scrolls underneath. Single sticky wrapper carries the
@@ -1502,6 +1704,11 @@ function renderTreePane(session) {
       // Re-apply the cached search after the async load so a session
       // returning to the panel with a pending query immediately filters.
       if (session.dbSearch) applyDbFilter(wrap, session.dbSearch);
+      // Now that the DB rows exist, run one sync pass against the
+      // current editor text. This catches the case where the user
+      // returns to a tab whose SQL already references a known table —
+      // no extra typing needed to land on the right accordion node.
+      scheduleTreeSync(session);
     })
     .catch((err) => safeToast(`Failed to load databases: ${err?.message ?? err}`, "error"));
   return wrap;
@@ -1567,12 +1774,13 @@ function renderDbNode(session, dbName) {
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
-  head.addEventListener("click", async () => {
-    const open = childList.style.display !== "none";
-    // Accordion: opening a database collapses every sibling DB so only
-    // one is active at a time. Connections with a pinned database render
-    // a single DB node, so this loop is a no-op there.
-    if (!open) {
+  let loadingPromise = null;
+  // Single source of truth for "expand this DB". Both the click handler
+  // and the SQL-sync caller route through this so the accordion
+  // collapse-siblings logic + active-state highlight always run together.
+  async function openDb() {
+    const wasOpen = childList.style.display !== "none";
+    if (!wasOpen) {
       const parent = li.parentElement;
       if (parent) {
         for (const sib of parent.querySelectorAll(":scope > .tsql-node-db")) {
@@ -1583,25 +1791,43 @@ function renderDbNode(session, dbName) {
           if (sCaret) sCaret.classList.remove("is-open");
         }
       }
-      // Opening a database sets it as the active context for free-form
-      // queries (sent to /query so the sidecar issues USE / search_path).
       session.currentDatabase = dbName;
-      panelRoot?.querySelectorAll(".tsql-node-db .tsql-tree-row.is-active")
+      panelRoot
+        ?.querySelectorAll(".tsql-node-db .tsql-tree-row.is-active")
         .forEach((r) => r.classList.remove("is-active"));
       head.classList.add("is-active");
+      childList.style.display = "";
+      caretBox.classList.add("is-open");
     }
-    childList.style.display = open ? "none" : "";
-    caretBox.classList.toggle("is-open", !open);
-    if (!loaded && !open) {
-      loaded = true;
-      try {
-        await loadSchemas(session, dbName, childList);
-      } catch (err) {
-        loaded = false;
-        childList.appendChild(el("li", { class: "tsql-tree-error", text: err?.message ?? String(err) }));
+    if (!loaded) {
+      if (!loadingPromise) {
+        loadingPromise = (async () => {
+          try {
+            await loadSchemas(session, dbName, childList);
+            loaded = true;
+          } catch (err) {
+            loaded = false;
+            childList.appendChild(
+              el("li", { class: "tsql-tree-error", text: err?.message ?? String(err) }),
+            );
+          } finally {
+            loadingPromise = null;
+          }
+        })();
       }
+      await loadingPromise;
     }
+  }
+  function closeDb() {
+    childList.style.display = "none";
+    caretBox.classList.remove("is-open");
+  }
+  head.addEventListener("click", async () => {
+    const wasOpen = childList.style.display !== "none";
+    if (wasOpen) closeDb();
+    else await openDb();
   });
+  session.dbHandles?.set(dbName, { open: openDb, close: closeDb, row: head });
   return li;
 }
 
@@ -1609,8 +1835,17 @@ async function loadSchemas(session, dbName, parent) {
   const resp = await fetchJson(
     `/schemas?conn=${encodeURIComponent(session.connId)}&database=${encodeURIComponent(dbName)}`,
   );
-  // Collapse single-schema (MySQL/SQLite) into the parent.
+  // Collapse single-schema (MySQL/SQLite) into the parent. Tables hang
+  // directly off the DB; register a flat schema handle anyway so the
+  // SQL sync can resolve `db.table` against it without branching on
+  // engine kind.
   if (resp.schemas.length === 1 && resp.schemas[0].name === dbName) {
+    const key = `${dbName.toLowerCase()} ${dbName.toLowerCase()}`;
+    session.schemaHandles?.set(key, {
+      open: async () => {},
+      close: () => {},
+      row: null,
+    });
     await loadTables(session, dbName, dbName, parent);
     return;
   }
@@ -1637,20 +1872,42 @@ function renderSchemaNode(session, dbName, schemaName) {
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
-  head.addEventListener("click", async () => {
-    const open = childList.style.display !== "none";
-    childList.style.display = open ? "none" : "";
-    caretBox.classList.toggle("is-open", !open);
-    if (!loaded && !open) {
-      loaded = true;
-      try {
-        await loadTables(session, dbName, schemaName, childList);
-      } catch (err) {
-        loaded = false;
-        childList.appendChild(el("li", { class: "tsql-tree-error", text: err?.message ?? String(err) }));
-      }
+  let loadingPromise = null;
+  async function openSchema() {
+    if (childList.style.display === "none") {
+      childList.style.display = "";
+      caretBox.classList.add("is-open");
     }
+    if (!loaded) {
+      if (!loadingPromise) {
+        loadingPromise = (async () => {
+          try {
+            await loadTables(session, dbName, schemaName, childList);
+            loaded = true;
+          } catch (err) {
+            loaded = false;
+            childList.appendChild(
+              el("li", { class: "tsql-tree-error", text: err?.message ?? String(err) }),
+            );
+          } finally {
+            loadingPromise = null;
+          }
+        })();
+      }
+      await loadingPromise;
+    }
+  }
+  function closeSchema() {
+    childList.style.display = "none";
+    caretBox.classList.remove("is-open");
+  }
+  head.addEventListener("click", async () => {
+    const wasOpen = childList.style.display !== "none";
+    if (wasOpen) closeSchema();
+    else await openSchema();
   });
+  const schemaKey = `${dbName.toLowerCase()} ${schemaName.toLowerCase()}`;
+  session.schemaHandles?.set(schemaKey, { open: openSchema, close: closeSchema, row: head });
   return li;
 }
 
@@ -1676,6 +1933,9 @@ async function loadTables(session, database, schema, parent) {
     });
     parent.appendChild(renderTableNode(session, database, schema, t));
   }
+  // Cache just gained a batch of table names; replay the SQL-driven
+  // sync in case the user typed the table before its DB was expanded.
+  scheduleTreeSync(session);
 }
 
 function renderTableNode(session, database, schema, info) {
@@ -1700,6 +1960,10 @@ function renderTableNode(session, database, schema, info) {
       : null,
   );
   li.appendChild(head);
+  // Register so the SQL-driven sync can scroll this row into view and
+  // pulse the highlight when the user references the table by name.
+  const key = tableHandleKey(database, schema, info.name);
+  session.tableHandles?.set(key, { row: head, database, schema, table: info.name });
   return li;
 }
 
@@ -1783,6 +2047,11 @@ function renderEditorAndResults(session) {
       value: session.sql ?? "",
       onChange: (v) => {
         session.sql = v;
+        // Debounced parse of the new SQL; if the user typed a table
+        // name we already cached, expand its DB in the accordion and
+        // scroll the table row into view. No-op when the parser
+        // finds nothing recognisable.
+        scheduleTreeSync(session);
       },
       onCmdEnter: () => runActiveQuery(),
       // Walks the schema cache (populated as the user expands the tree /
@@ -2032,6 +2301,20 @@ async function loadTableRows(session, page) {
     body.order_by = session.orderBy;
     body.order_dir = session.orderDir === "desc" ? "desc" : "asc";
   }
+  // Server-side search. The sidecar ORs the LIKE predicate across
+  // either the single `search_column` (if set) or the full
+  // `search_columns` list. We send the column list from the snapshot
+  // so the helper doesn't need an extra introspection round-trip.
+  const term = (session.gridSearch || "").trim();
+  if (term) {
+    body.search = term;
+    if (session.gridSearchCol) {
+      body.search_column = session.gridSearchCol;
+    } else {
+      const cols = session.tableSnapshot?.columns;
+      if (Array.isArray(cols) && cols.length) body.search_columns = cols;
+    }
+  }
   try {
     const resp = await fetchJson("/table-rows", { method: "POST", body });
     session.tableSnapshot = resp.result;
@@ -2065,11 +2348,15 @@ function renderTableGrid(container, session) {
     container.appendChild(el("p", { class: "tsql-empty", text: "Loading…" }));
     return;
   }
-  // Search input filters loaded rows client-side. The column select
-  // narrows the search to a single column (or "All columns" = scan every
-  // cell). Sort is server-side (order_by goes to /table-rows) so it
-  // applies across pages, not just the visible window.
-  const { wrap: searchWrap, input: searchInput } = makeSearchInput({
+  // Search + column filter run server-side: every change re-issues
+  // `/table-rows` with the new predicate so the LIKE applies across
+  // every row in the table, not just the loaded page. The keystroke
+  // path is debounced (240 ms) so a fast typist doesn't fire one
+  // request per character; the column dropdown reloads immediately
+  // since users typically change it rarely. `total` returned by the
+  // sidecar reflects the filter, which keeps the pager and "N rows"
+  // header consistent.
+  const { wrap: searchWrap } = makeSearchInput({
     placeholder: "Search rows…",
     ariaLabel: "Search rows",
     inputClass: "tsql-input tsql-grid-search",
@@ -2077,20 +2364,17 @@ function renderTableGrid(container, session) {
     initialValue: session.gridSearch ?? "",
     onInput: (val) => {
       session.gridSearch = val;
-      applyGridFilter(container, session);
+      scheduleGridSearch(session);
     },
   });
 
-  // Column filter dropdown. Uses the same custom `select()` helper that
-  // powers the connection-editor dropdowns so the workbench chrome stays
-  // consistent (Settings-style trigger + caret + Tick02Icon on selected).
   const colOptions = [
     { value: "", label: "All columns" },
     ...snap.columns.map((c) => ({ value: c, label: c })),
   ];
   const colSelect = select(colOptions, session.gridSearchCol ?? "", (val) => {
     session.gridSearchCol = val;
-    applyGridFilter(container, session);
+    loadTableRows(session, 0);
   });
   colSelect.classList.add("tsql-grid-colfilter");
 
@@ -2190,63 +2474,33 @@ function renderTableGrid(container, session) {
   container.appendChild(wrap);
 
   container.appendChild(renderPager(session, snap));
-
-  // Re-apply persisted search/filter after the DOM rebuild so the row
-  // visibility survives reloads (page change, reload, sort flip).
-  applyGridFilter(container, session);
 }
 
-/** Hide tbody rows that don't match the current search query. When
- *  `gridSearchCol` is set the substring match is restricted to that
- *  one column; otherwise every cell in the row is scanned. Operates on
- *  the loaded snapshot only — server-side WHERE is intentionally
- *  avoided to keep the sidecar API surface flat. */
-function applyGridFilter(rootEl, session) {
-  const snap = session.tableSnapshot;
-  if (!snap) return;
-  const tbody = rootEl.querySelector(".tsql-grid tbody");
-  if (!tbody) return;
-  const q = (session.gridSearch || "").trim().toLowerCase();
-  const col = session.gridSearchCol || "";
-  const colIdx = col ? snap.columns.indexOf(col) : -1;
-  const trs = tbody.querySelectorAll(":scope > tr");
-  trs.forEach((tr, ri) => {
-    if (!q) {
-      tr.style.display = "";
-      return;
-    }
-    const cells = snap.rows[ri];
-    if (!cells) {
-      tr.style.display = "";
-      return;
-    }
-    let match;
-    if (colIdx >= 0) {
-      match = cellMatchesQuery(cells[colIdx], q);
-    } else {
-      match = cells.some((c) => cellMatchesQuery(c, q));
-    }
-    tr.style.display = match ? "" : "none";
-  });
-}
-
-function cellMatchesQuery(value, q) {
-  if (value == null) return false;
-  let text;
-  if (typeof value === "object") {
-    if (value.__type === "bytes") text = `${value.size ?? ""} bytes`;
-    else text = JSON.stringify(value);
-  } else {
-    text = String(value);
-  }
-  return text.toLowerCase().includes(q);
+// Debounce holder for the keystroke-driven grid search. Module-level
+// because the search input is recreated on every render; the user's
+// last keystroke wins per session.
+const gridSearchTimers = new Map();
+function scheduleGridSearch(session) {
+  const prev = gridSearchTimers.get(session.connId);
+  if (prev) clearTimeout(prev);
+  const t = setTimeout(() => {
+    gridSearchTimers.delete(session.connId);
+    // Server-side search resets to page 0; the filtered total may be
+    // smaller than the current page index pointed into.
+    loadTableRows(session, 0).catch((err) =>
+      ctx?.logger?.warn?.("grid search failed", err),
+    );
+  }, 240);
+  gridSearchTimers.set(session.connId, t);
 }
 
 function rowActionsCell(session, rowIdx) {
   return el(
     "td",
     { class: "tsql-grid-actions-col" },
-    rowActionBtn("Delete02Icon", "Delete row", () => deleteRowFromGrid(session, rowIdx)),
+    rowActionBtn("Delete02Icon", "Delete row", () => deleteRowFromGrid(session, rowIdx), {
+      danger: true,
+    }),
   );
 }
 
@@ -2399,6 +2653,7 @@ async function deleteRowFromGrid(session, rowIdx) {
     title: "Delete row?",
     message: `This will delete the row where ${pkSummary}. This action can't be undone.`,
     confirmLabel: "Delete",
+    destructive: true,
     cancelLabel: "Cancel",
   });
   if (!ok) return;
@@ -2729,6 +2984,15 @@ const STYLES_CSS = `
 .tsql-conn-host { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: var(--radius, 0); display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-row-action:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
+/* Destructive variant for delete / trash row actions. Rest sits at the
+   same muted neutral as the regular action so the row doesn't scream
+   "danger" until the user actually targets it; on hover the bg lifts
+   to a 10% --destructive tint and the icon shifts to --destructive,
+   matching the host's pattern (text-muted-foreground
+   hover:bg-destructive/10 hover:text-destructive) used in Settings,
+   WorkspacesPanel, ExplorerGrep, SSH menu, etc. */
+.tsql-row-action.is-danger:hover { background: color-mix(in srgb, var(--destructive, #ef4444) 12%, transparent); color: var(--destructive, #ef4444); }
+.tsql-row-action.is-danger:focus-visible { color: var(--destructive, #ef4444); outline: 1px solid var(--destructive, #ef4444); outline-offset: -1px; }
 
 /* Workspace: schema tree (auto-shrinking) + editor / results column. */
 .tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
@@ -2763,6 +3027,17 @@ const STYLES_CSS = `
 .tsql-tree-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); }
 .tsql-tree-row:focus-visible { background: var(--accent, rgba(127,127,127,0.12)); }
 .tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); }
+/* SQL-driven navigation cue. When the user types a table name we know,
+   the matching row pulses in --ring for ~1.2 s, then settles into a
+   subtle border-left accent so the user can still see "this is what
+   the editor is talking about" without the row screaming. The pulse
+   uses box-shadow inset so it doesn't shift layout. */
+.tsql-tree-row.is-target { box-shadow: inset 2px 0 0 0 var(--ring, var(--primary, #3b82f6)); animation: tsql-target-pulse 1.2s ease-out 1; }
+@keyframes tsql-target-pulse {
+  0%   { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 35%, transparent); }
+  60%  { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 18%, transparent); }
+  100% { background: transparent; }
+}
 .tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }
 .tsql-caret.is-open { transform: rotate(90deg); }
 .tsql-caret-empty { visibility: hidden; }
@@ -2788,6 +3063,12 @@ const STYLES_CSS = `
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-primary:hover:not([disabled]) { background: color-mix(in srgb, var(--primary, #3b82f6) 80%, transparent); }
 .tsql-btn.is-primary:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
+/* Destructive confirm button. Mirrors the host's
+   `<AlertDialogAction variant="destructive">` chrome: filled red bg
+   with white text at rest, slightly lifted on hover, --ring on focus. */
+.tsql-btn.is-destructive { background: var(--destructive, #ef4444); color: var(--destructive-foreground, #fff); border-color: transparent; }
+.tsql-btn.is-destructive:hover:not([disabled]) { background: color-mix(in srgb, var(--destructive, #ef4444) 85%, transparent); }
+.tsql-btn.is-destructive:focus-visible { border-color: var(--ring, var(--destructive, #ef4444)); }
 
 /* Code-editor container: hosts a CodeMirror EditorView mounted by
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
@@ -2799,15 +3080,20 @@ const STYLES_CSS = `
    parent .tsql-main, which flex-basis: var(...) flows into. 6px hit area
    with a thin centred indicator that only paints on hover / drag, so the
    splitter is invisible at rest but obviously interactive on approach. */
-/* Splitter matches the host's <ResizableHandle> chrome (resizable.tsx):
-   a 1 px line in --tedi-resize-handle, but the splitter itself stays a
-   6 px flex item so users have a clickable target instead of needing to
-   land on a single pixel. The visible 1 px line lives in the ::before
-   pseudo, centred vertically. Hover / drag / focus swap the line to
-   --ring to match TEDI's active pane indicator. */
-.tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; }
+/* Splitter matches the host's <ResizableHandle withHandle> chrome
+   (resizable.tsx): a 1 px line in --tedi-resize-handle painted via the
+   ::before pseudo, plus a small grip kotak in the centre painted via
+   ::after so the affordance reads as resizable at rest (not only on
+   hover). The splitter itself is 10 px tall flex-wise so users have a
+   comfortable click target around the visible 1 px line. Hover / drag /
+   focus swap the line + grip to --ring to match TEDI's active pane
+   indicator. */
+.tsql-splitter { position: relative; flex: 0 0 10px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
 .tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
+.tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 28px; height: 6px; border-radius: 999px; background: var(--tedi-resize-handle, var(--border)); border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent); transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease; }
 .tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--ring, var(--primary, #3b82f6)); }
+.tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--ring, var(--primary, #3b82f6)); border-color: var(--ring, var(--primary, #3b82f6)); }
+.tsql-splitter.is-dragging::after { transform: scaleX(1.08); }
 .tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }

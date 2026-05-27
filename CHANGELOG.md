@@ -2,6 +2,67 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.20 (2026-05-27)
+
+Table grid search now runs through the database via `WHERE`, and the
+delete affordances pick up the host's destructive chrome.
+
+- Grid `Search rows…` input + column dropdown push to the server. The
+  sidecar builds an OR-of-LIKE predicate across the supplied columns
+  (or the single `search_column` when one is selected), and reports
+  the matched `total` back so the pager + "N rows" header stay
+  accurate as the filter narrows. LIKE metacharacters in the user-
+  typed query are escaped so `a_b` matches a literal underscore.
+  Search is debounced 240 ms; column change reloads immediately.
+- MySQL casts non-string columns to `CHAR` and uses default collation
+  for case-insensitive matching. Postgres uses `ILIKE` against
+  `CAST(col AS TEXT)`. SQLite wraps both sides in `LOWER(...)` for
+  Unicode-stable behaviour. Existing `order_by` continues to apply.
+- Delete row-action icons (delete connection in the rail, delete row
+  in the grid) now hover to a 10% --destructive tint with red text,
+  matching the host's
+  `text-muted-foreground hover:bg-destructive/10 hover:text-destructive`
+  pattern (Settings, WorkspacesPanel, ExplorerGrep, SSH menu).
+- Confirm dialog gained a `destructive: true` option; "Delete
+  connection?" and "Delete row?" prompts use it, so the confirm
+  button paints in --destructive instead of --primary — same chrome
+  as the host's `AlertDialogAction variant="destructive"`.
+- Sidecar bumped to v0.1.1; the new prebuilt
+  `sidecar/windows-x86_64/tedi-sql-helper.exe` ships with the
+  `search`, `search_column`, and `search_columns` request fields
+  recognised by `/table-rows`.
+
+## 0.2.19 (2026-05-26)
+
+Right sidebar follows the left one closed on workspace open, splitter
+ships a grip kotak, and the schema accordion now tracks the table the
+SQL editor is referencing.
+
+- Opening the SQL Explorer tab also collapses the right-side aux column
+  (AI chat / extension right panel / SCM right panel). Mirrors the
+  existing left-sidebar collapse so the workbench gets the full
+  workspace width from both sides on first open. Falls through on
+  hosts that predate the API (host >= 0.3.5 required for the right
+  collapse; older hosts keep the previous left-only behaviour).
+- Editor / results splitter now paints a visible 28x6 px grip kotak
+  centred on the line so the resize affordance reads at rest, not
+  only on hover. Grip + line both lift to --ring on hover / drag /
+  focus, and the grip widens slightly during the drag so the user
+  can see the handle is "grabbed".
+- Schema accordion auto-tracks the SQL editor. As the user types,
+  any `FROM`, `JOIN`, `UPDATE`, `INSERT INTO`, `DELETE FROM`,
+  `TRUNCATE`, or `CREATE/ALTER/DROP TABLE` clause is parsed; if the
+  referenced table lives in a cached database, that database is
+  expanded (collapsing any sibling DB via the existing accordion
+  rule) and the matching table row pulses + scrolls into view. The
+  active database context (used by `/query` for the USE / search_path
+  hint) follows the accordion, so a free-form
+  `SELECT * FROM other_db.users` immediately retargets to `other_db`.
+- Parser strips comments and single-quoted strings so a literal like
+  `'FROM users'` inside a WHERE clause doesn't trip a false sync.
+  Quoted identifiers (` `, `"`, `[`) and 1-3 level qualifiers
+  (`db.schema.table`) are recognised.
+
 ## 0.2.18 (2026-05-26)
 
 - Toolbar buttons (Stop, Export, Row, Reload, Close, etc.) no longer

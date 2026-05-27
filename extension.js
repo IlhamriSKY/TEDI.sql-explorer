@@ -3077,23 +3077,19 @@ const STYLES_CSS = `
 .tsql-editor .cm-editor.cm-focused { outline: none; }
 /* Vertical splitter between the query editor and the results pane.
    Drag handler in renderEditorAndResults updates --tsql-editor-h on the
-   parent .tsql-main, which flex-basis: var(...) flows into. 6px hit area
-   with a thin centred indicator that only paints on hover / drag, so the
-   splitter is invisible at rest but obviously interactive on approach. */
-/* Splitter matches the host's <ResizableHandle withHandle> chrome
-   (resizable.tsx): a 1 px line in --tedi-resize-handle painted via the
-   ::before pseudo, plus a small grip kotak in the centre painted via
-   ::after so the affordance reads as resizable at rest (not only on
-   hover). The splitter itself is 10 px tall flex-wise so users have a
-   comfortable click target around the visible 1 px line. Hover / drag /
-   focus swap the line + grip to --ring to match TEDI's active pane
-   indicator. */
+   parent .tsql-main, which flex-basis: var(...) flows into.
+   Visuals mirror the host ResizableHandle withHandle (resizable.tsx):
+   a 1 px line in --tedi-resize-handle plus a 24 x 4 grip in the same
+   colour. Grip matches the host h-6 w-1 rotated 90deg with TEDI's
+   --radius-lg (0) so corners stay sharp. Hover stays neutral (host
+   does not change colour either); focus and drag swap to --ring for
+   keyboard plus active feedback. NB: this comment lives inside the JS
+   template literal STYLES_CSS, so backticks are forbidden here. */
 .tsql-splitter { position: relative; flex: 0 0 10px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
 .tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
-.tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 28px; height: 6px; border-radius: 999px; background: var(--tedi-resize-handle, var(--border)); border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent); transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease; }
-.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--ring, var(--primary, #3b82f6)); }
-.tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--ring, var(--primary, #3b82f6)); border-color: var(--ring, var(--primary, #3b82f6)); }
-.tsql-splitter.is-dragging::after { transform: scaleX(1.08); }
+.tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 24px; height: 4px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
+.tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: var(--ring, var(--primary, #3b82f6)); }
+.tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--ring, var(--primary, #3b82f6)); }
 .tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }

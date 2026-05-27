@@ -9,7 +9,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Executor as _, Row, Statement as _, TypeInfo};
 
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
@@ -289,20 +289,29 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                     q = q.bind(b.as_str());
                 }
             }
+            // Preflight prepare so the column list survives 0-row results
+            // (empty table, filter that matches nothing). sqlx caches the
+            // prepared statement so the fetch below reuses it.
+            let prep_cols: Option<(Vec<String>, Vec<String>)> =
+                pool.prepare(&sql).await.ok().map(|s| {
+                    s.columns()
+                        .iter()
+                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
+                        .unzip()
+                });
             let rows = q.fetch_all(pool).await?;
-            let columns: Vec<String> = rows
-                .first()
-                .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
-                .unwrap_or_default();
-            let column_types: Vec<String> = rows
-                .first()
-                .map(|r| {
+            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+                prep_cols.unwrap_or_default()
+            } else {
+                let r = rows.first().unwrap();
+                (
+                    r.columns().iter().map(|c| c.name().to_string()).collect(),
                     r.columns()
                         .iter()
                         .map(|c| c.type_info().name().to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+                        .collect(),
+                )
+            };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_mysql_row).collect();
             let total = count_mysql(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {
@@ -344,20 +353,26 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                     q = q.bind(b.as_str());
                 }
             }
+            let prep_cols: Option<(Vec<String>, Vec<String>)> =
+                pool.prepare(&sql).await.ok().map(|s| {
+                    s.columns()
+                        .iter()
+                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
+                        .unzip()
+                });
             let rows = q.fetch_all(pool).await?;
-            let columns: Vec<String> = rows
-                .first()
-                .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
-                .unwrap_or_default();
-            let column_types: Vec<String> = rows
-                .first()
-                .map(|r| {
+            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+                prep_cols.unwrap_or_default()
+            } else {
+                let r = rows.first().unwrap();
+                (
+                    r.columns().iter().map(|c| c.name().to_string()).collect(),
                     r.columns()
                         .iter()
                         .map(|c| c.type_info().name().to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+                        .collect(),
+                )
+            };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_pg_row).collect();
             let total = count_pg(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {
@@ -394,20 +409,26 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                     q = q.bind(b.as_str());
                 }
             }
+            let prep_cols: Option<(Vec<String>, Vec<String>)> =
+                pool.prepare(&sql).await.ok().map(|s| {
+                    s.columns()
+                        .iter()
+                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
+                        .unzip()
+                });
             let rows = q.fetch_all(pool).await?;
-            let columns: Vec<String> = rows
-                .first()
-                .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
-                .unwrap_or_default();
-            let column_types: Vec<String> = rows
-                .first()
-                .map(|r| {
+            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+                prep_cols.unwrap_or_default()
+            } else {
+                let r = rows.first().unwrap();
+                (
+                    r.columns().iter().map(|c| c.name().to_string()).collect(),
                     r.columns()
                         .iter()
                         .map(|c| c.type_info().name().to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
+                        .collect(),
+                )
+            };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_sqlite_row).collect();
             let total = count_sqlite(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {

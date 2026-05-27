@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Column, Executor, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo};
 use tokio_util::sync::CancellationToken;
 
 use crate::db::Backend;
@@ -260,17 +260,23 @@ pub async fn execute(
     // (Postgres) survives across statements. Without this, sqlx's
     // pool.execute() may hand a different physical connection to each
     // statement, dropping the session-level setting.
+    // MySQL `USE` (and some `SET` / `SHOW` variants) are not supported by
+    // the prepared-statement protocol and return error 1295. Send these
+    // session-control statements via the text protocol by calling
+    // `Executor::execute(&str)` directly, which sqlx routes through the
+    // simple-query path (no `COM_STMT_PREPARE`).
+    use sqlx::Executor as _;
     let pinned: Option<PinnedConn> = match (backend, database) {
         (Backend::Mysql(pool), Some(db)) if !db.is_empty() => {
             let mut conn = pool.acquire().await?;
             let use_sql = format!("USE `{}`", db.replace('`', "``"));
-            sqlx::query(&use_sql).execute(&mut *conn).await?;
+            (&mut *conn).execute(use_sql.as_str()).await?;
             Some(PinnedConn::Mysql(conn))
         }
         (Backend::Postgres(pool), Some(db)) if !db.is_empty() => {
             let mut conn = pool.acquire().await?;
             let set_sql = format!("SET search_path TO \"{}\"", db.replace('"', "\"\""));
-            sqlx::query(&set_sql).execute(&mut *conn).await?;
+            (&mut *conn).execute(set_sql.as_str()).await?;
             Some(PinnedConn::Postgres(conn))
         }
         _ => None,
@@ -364,12 +370,29 @@ async fn run_one(
     kind: StatementKind,
     row_limit: u64,
 ) -> AppResult<StatementResult> {
+    use sqlx::{Column as _, Executor as _, Statement as _, TypeInfo as _};
     let is_read = matches!(kind, StatementKind::Read | StatementKind::Unknown);
     match (backend, pinned) {
         (Backend::Mysql(_), Some(PinnedConn::Mysql(conn))) => {
             if is_read {
+                // Preflight prepare so the column metadata survives 0-row
+                // result sets. sqlx caches the prepared statement so
+                // `fetch_all` below reuses it without a second round-trip.
+                let prep_cols: Option<Vec<ColumnHeader>> = (&mut **conn)
+                    .prepare(sql)
+                    .await
+                    .ok()
+                    .map(|s| {
+                        s.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
+                    });
                 let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
-                let (columns, decoded, truncated) = collect_mysql_rows(rows, row_limit);
+                let (columns, decoded, truncated) = collect_mysql_rows(rows, prep_cols, row_limit);
                 Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = sqlx::query(sql).execute(&mut **conn).await?;
@@ -378,8 +401,21 @@ async fn run_one(
         }
         (Backend::Postgres(_), Some(PinnedConn::Postgres(conn))) => {
             if is_read {
+                let prep_cols: Option<Vec<ColumnHeader>> = (&mut **conn)
+                    .prepare(sql)
+                    .await
+                    .ok()
+                    .map(|s| {
+                        s.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
+                    });
                 let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
-                let (columns, decoded, truncated) = collect_pg_rows(rows, row_limit);
+                let (columns, decoded, truncated) = collect_pg_rows(rows, prep_cols, row_limit);
                 Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = sqlx::query(sql).execute(&mut **conn).await?;
@@ -388,8 +424,21 @@ async fn run_one(
         }
         (Backend::Mysql(pool), _) => {
             if is_read {
+                let prep_cols: Option<Vec<ColumnHeader>> = pool
+                    .prepare(sql)
+                    .await
+                    .ok()
+                    .map(|s| {
+                        s.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
+                    });
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_mysql_rows(rows, row_limit);
+                let (columns, decoded, truncated) = collect_mysql_rows(rows, prep_cols, row_limit);
                 Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
@@ -398,8 +447,21 @@ async fn run_one(
         }
         (Backend::Postgres(pool), _) => {
             if is_read {
+                let prep_cols: Option<Vec<ColumnHeader>> = pool
+                    .prepare(sql)
+                    .await
+                    .ok()
+                    .map(|s| {
+                        s.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
+                    });
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_pg_rows(rows, row_limit);
+                let (columns, decoded, truncated) = collect_pg_rows(rows, prep_cols, row_limit);
                 Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
@@ -408,8 +470,21 @@ async fn run_one(
         }
         (Backend::Sqlite(pool), _) => {
             if is_read {
+                let prep_cols: Option<Vec<ColumnHeader>> = pool
+                    .prepare(sql)
+                    .await
+                    .ok()
+                    .map(|s| {
+                        s.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
+                    });
                 let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_sqlite_rows(rows, row_limit);
+                let (columns, decoded, truncated) = collect_sqlite_rows(rows, prep_cols, row_limit);
                 Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
             } else {
                 let r = pool.execute(sqlx::query(sql)).await?;
@@ -421,18 +496,20 @@ async fn run_one(
 
 fn collect_mysql_rows(
     rows: Vec<sqlx::mysql::MySqlRow>,
+    header_override: Option<Vec<ColumnHeader>>,
     limit: u64,
 ) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = rows
-        .first()
-        .map(|r| {
-            r.columns()
-                .iter()
-                .map(|c| ColumnHeader {
-                    name: c.name().to_string(),
-                    data_type: c.type_info().name().to_string(),
-                })
-                .collect()
+    let columns = header_override
+        .or_else(|| {
+            rows.first().map(|r| {
+                r.columns()
+                    .iter()
+                    .map(|c| ColumnHeader {
+                        name: c.name().to_string(),
+                        data_type: c.type_info().name().to_string(),
+                    })
+                    .collect()
+            })
         })
         .unwrap_or_default();
     let truncated = rows.len() as u64 > limit;
@@ -446,18 +523,20 @@ fn collect_mysql_rows(
 
 fn collect_pg_rows(
     rows: Vec<sqlx::postgres::PgRow>,
+    header_override: Option<Vec<ColumnHeader>>,
     limit: u64,
 ) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = rows
-        .first()
-        .map(|r| {
-            r.columns()
-                .iter()
-                .map(|c| ColumnHeader {
-                    name: c.name().to_string(),
-                    data_type: c.type_info().name().to_string(),
-                })
-                .collect()
+    let columns = header_override
+        .or_else(|| {
+            rows.first().map(|r| {
+                r.columns()
+                    .iter()
+                    .map(|c| ColumnHeader {
+                        name: c.name().to_string(),
+                        data_type: c.type_info().name().to_string(),
+                    })
+                    .collect()
+            })
         })
         .unwrap_or_default();
     let truncated = rows.len() as u64 > limit;
@@ -471,18 +550,20 @@ fn collect_pg_rows(
 
 fn collect_sqlite_rows(
     rows: Vec<sqlx::sqlite::SqliteRow>,
+    header_override: Option<Vec<ColumnHeader>>,
     limit: u64,
 ) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = rows
-        .first()
-        .map(|r| {
-            r.columns()
-                .iter()
-                .map(|c| ColumnHeader {
-                    name: c.name().to_string(),
-                    data_type: c.type_info().name().to_string(),
-                })
-                .collect()
+    let columns = header_override
+        .or_else(|| {
+            rows.first().map(|r| {
+                r.columns()
+                    .iter()
+                    .map(|c| ColumnHeader {
+                        name: c.name().to_string(),
+                        data_type: c.type_info().name().to_string(),
+                    })
+                    .collect()
+            })
         })
         .unwrap_or_default();
     let truncated = rows.len() as u64 > limit;

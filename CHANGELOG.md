@@ -2,6 +2,27 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.22 (2026-05-27)
+
+- Fix: MySQL "USE \`db\`" no longer fails with error 1295 ("not supported
+  in the prepared statement protocol") when the user picks a database.
+  The sidecar now routes the session-pin USE statement through sqlx's
+  text protocol via `Executor::execute(&str)` instead of the prepared
+  path. The same swap covers the Postgres `SET search_path` pin.
+- Fix: SELECT queries that return 0 rows now still show their column
+  headers. The sidecar preflights `prepare(sql)` and uses the cached
+  statement metadata as the canonical column list; sqlx reuses the
+  prepared statement for the subsequent `fetch_all`, so no extra
+  round-trip. Same fix applied to the inline-edit table viewer
+  (`/table-rows`) for empty tables or zero-match search filters
+  (mysql / postgres / sqlite).
+- Style: query-editor / results splitter now matches the host's
+  `<ResizableHandle withHandle>` exactly. Grip is a 24 x 4 sharp
+  rectangle in `--tedi-resize-handle` (host uses `h-6 w-1 rounded-lg`
+  with TEDI's `--radius-lg: 0`, so corners are sharp there too). Hover
+  no longer changes colour, matching the host's static appearance;
+  focus / drag still swap line + grip to `--ring` for active feedback.
+
 ## 0.2.21 (2026-05-27)
 
 - Fix: 0.2.20 activation crash. The new destructive-button comment in

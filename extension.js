@@ -3064,7 +3064,7 @@ const STYLES_CSS = `
 .tsql-btn.is-primary:hover:not([disabled]) { background: color-mix(in srgb, var(--primary, #3b82f6) 80%, transparent); }
 .tsql-btn.is-primary:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 /* Destructive confirm button. Mirrors the host's
-   `<AlertDialogAction variant="destructive">` chrome: filled red bg
+   AlertDialogAction variant=destructive chrome: filled red bg
    with white text at rest, slightly lifted on hover, --ring on focus. */
 .tsql-btn.is-destructive { background: var(--destructive, #ef4444); color: var(--destructive-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-destructive:hover:not([disabled]) { background: color-mix(in srgb, var(--destructive, #ef4444) 85%, transparent); }

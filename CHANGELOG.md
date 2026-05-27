@@ -2,6 +2,16 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.21 (2026-05-27)
+
+- Fix: 0.2.20 activation crash. The new destructive-button comment in
+  STYLES_CSS wrapped `<AlertDialogAction variant="destructive">` in
+  literal backticks, which closed the template early and made the JS
+  parser choke on the following text ("Unexpected identifier
+  'variant'"). Replaced with plain text so the comment stays
+  informative without breaking the template. Same class of bug as
+  v0.2.10 and v0.2.16.
+
 ## 0.2.20 (2026-05-27)
 
 Table grid search now runs through the database via `WHERE`, and the

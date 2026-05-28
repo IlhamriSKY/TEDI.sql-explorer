@@ -2018,10 +2018,13 @@ function renderTableNode(session, database, schema, info) {
   const li = el("li", { class: `tsql-tree-node tsql-node-${info.kind}` });
   const iconBox = el("span", { class: "tsql-tree-icon" });
   appendIcon(iconBox, info.kind === "view" ? "ViewIcon" : "Table01Icon", { size: 14 });
+  const t = session.activeTable;
+  const isActive =
+    !!t && t.database === database && t.schema === schema && t.table === info.name;
   const head = el(
     "button",
     {
-      class: "tsql-tree-row",
+      class: `tsql-tree-row${isActive ? " is-active" : ""}`,
       attrs: { type: "button" },
       on: {
         click: () => openTable(session, { database, schema, table: info.name, kind: info.kind }),
@@ -2511,8 +2514,28 @@ function cellTooltip(value) {
 
 // ----------------------------- Editable table grid ---------------------------
 
+/** Reflect the open table in the schema tree. Opening a table re-renders
+ *  only the results pane, so we toggle `is-active` on the existing tree
+ *  rows directly: clear any prior table/view highlight, then mark the row
+ *  for `session.activeTable`. Re-renders pick the state up via the
+ *  `isActive` check in renderTableNode. */
+function markActiveTableInTree(session) {
+  if (!panelRoot) return;
+  panelRoot
+    .querySelectorAll(
+      ".tsql-node-table > .tsql-tree-row.is-active, .tsql-node-view > .tsql-tree-row.is-active",
+    )
+    .forEach((r) => r.classList.remove("is-active"));
+  const t = session.activeTable;
+  if (!t) return;
+  session.tableHandles
+    ?.get(tableHandleKey(t.database, t.schema, t.table))
+    ?.row?.classList.add("is-active");
+}
+
 async function openTable(session, target, scrollIntoView = false) {
   session.activeTable = target;
+  markActiveTableInTree(session);
   // Opening a table also sets the active database context, so a
   // subsequent free-form `SELECT * FROM …` in the query editor
   // resolves against the same DB the user just clicked into.
@@ -3541,13 +3564,20 @@ const STYLES_CSS = `
 .tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px 4px calc(8px + var(--tsql-depth, 0) * 14px); background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: var(--radius, 0); outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-tree-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); }
 .tsql-tree-row:focus-visible { background: var(--accent, rgba(127,127,127,0.12)); }
-.tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); }
+/* Active row (selected database / open table). A cohesive highlighted
+   block: accent fill + accent-foreground text, a flush 2 px primary bar
+   on the left (inset box-shadow so it merges with the fill instead of
+   reading as a detached line), and square corners so the bar runs the
+   full row height. Icon / caret / row-count all shift to the active text
+   colour so the whole row reads as selected, not just a left stripe. */
+.tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); box-shadow: inset 2px 0 0 0 var(--primary, #3b82f6); border-radius: 0; }
+.tsql-tree-row.is-active .tsql-tree-icon, .tsql-tree-row.is-active .tsql-caret, .tsql-tree-row.is-active .tsql-tree-meta { color: var(--accent-foreground, var(--foreground)); }
 /* SQL-driven navigation cue. When the user types a table name we know,
    the matching row pulses in --ring for ~1.2 s, then settles into a
    subtle border-left accent so the user can still see "this is what
    the editor is talking about" without the row screaming. The pulse
    uses box-shadow inset so it doesn't shift layout. */
-.tsql-tree-row.is-target { box-shadow: inset 2px 0 0 0 var(--ring, var(--primary, #3b82f6)); animation: tsql-target-pulse 1.2s ease-out 1; }
+.tsql-tree-row.is-target { box-shadow: inset 2px 0 0 0 var(--ring, var(--primary, #3b82f6)); border-radius: 0; animation: tsql-target-pulse 1.2s ease-out 1; }
 @keyframes tsql-target-pulse {
   0%   { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 35%, transparent); }
   60%  { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 18%, transparent); }

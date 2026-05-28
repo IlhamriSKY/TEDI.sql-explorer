@@ -2,6 +2,21 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.28 (2026-05-28)
+
+- Style: active schema-tree row (selected database / open table) is now a
+  cohesive highlighted block instead of a lonely left stripe. The 2 px
+  primary accent moved onto `.is-active` itself as a flush inset
+  box-shadow (square corners, full row height) so it merges with the
+  accent fill rather than reading as a detached line.
+- Feat: the open table is highlighted in the tree. Its row now changes
+  background and text colour (label, icon, caret, and row count all shift
+  to the active foreground), not just showing the blue left line.
+  renderTableNode marks the row matching `session.activeTable`, and
+  `openTable` toggles it live without a full tree rebuild.
+- Style: the SQL-driven navigation cue (`.is-target`) also squares its
+  corners so its accent bar stays a clean, connected vertical line.
+
 ## 0.2.27 (2026-05-28)
 
 - Fix: connection rail subtitle no longer renders dangling separators when

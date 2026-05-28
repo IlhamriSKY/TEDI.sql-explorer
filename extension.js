@@ -1693,13 +1693,24 @@ async function syncTreeToSql(session) {
 
 function highlightTableRow(row) {
   if (!row) return;
-  // Clear any prior highlight so only the latest match pulses. The
-  // `.is-target` class drives a subtle accent tint via the stylesheet;
-  // the row scrolls into view first so the pulse is actually visible
-  // when the editor sits below the tree on narrow widths.
+  // The query cue (`.is-target`) marks the table the running / typed
+  // statement is about, so query mode gets the same kind of indication as
+  // browsing a table. Only one table is ever in focus: clear the prior
+  // query cue AND the browse highlight, then mark this row. If the row is
+  // already the target, don't re-add (that would re-trigger the pulse and
+  // re-scroll on every keystroke).
+  const already = row.classList.contains("is-target");
   panelRoot
     ?.querySelectorAll(".tsql-tree-row.is-target")
-    .forEach((r) => r.classList.remove("is-target"));
+    .forEach((r) => {
+      if (r !== row) r.classList.remove("is-target");
+    });
+  panelRoot
+    ?.querySelectorAll(
+      ".tsql-node-table > .tsql-tree-row.is-active, .tsql-node-view > .tsql-tree-row.is-active",
+    )
+    .forEach((r) => r.classList.remove("is-active"));
+  if (already) return;
   row.classList.add("is-target");
   try {
     row.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
@@ -2516,16 +2527,17 @@ function cellTooltip(value) {
 
 /** Reflect the open table in the schema tree. Opening a table re-renders
  *  only the results pane, so we toggle `is-active` on the existing tree
- *  rows directly: clear any prior table/view highlight, then mark the row
- *  for `session.activeTable`. Re-renders pick the state up via the
- *  `isActive` check in renderTableNode. */
+ *  rows directly: clear any prior table/view highlight (and the query cue
+ *  so browse and query never both light up a row), then mark the row for
+ *  `session.activeTable`. Re-renders pick the state up via the `isActive`
+ *  check in renderTableNode. */
 function markActiveTableInTree(session) {
   if (!panelRoot) return;
   panelRoot
     .querySelectorAll(
-      ".tsql-node-table > .tsql-tree-row.is-active, .tsql-node-view > .tsql-tree-row.is-active",
+      ".tsql-node-table > .tsql-tree-row.is-active, .tsql-node-view > .tsql-tree-row.is-active, .tsql-tree-row.is-target",
     )
-    .forEach((r) => r.classList.remove("is-active"));
+    .forEach((r) => r.classList.remove("is-active", "is-target"));
   const t = session.activeTable;
   if (!t) return;
   session.tableHandles
@@ -3331,6 +3343,12 @@ async function runActiveQuery() {
     if (panelRoot) {
       const root = panelRoot.querySelector("[data-results-root]");
       if (root) renderQueryResult(root, session);
+      // Reflect the executed query in the tree the same way browsing does:
+      // drop the now-stale browse highlight (activeTable is null here) and
+      // mark the table the statement references via the SQL sync. Gives
+      // query mode a clear "this is the table" cue instead of nothing.
+      markActiveTableInTree(session);
+      syncTreeToSql(session).catch((err) => ctx?.logger?.warn?.("tree sync failed", err));
     }
   }
 }
@@ -3589,16 +3607,17 @@ const STYLES_CSS = `
 .tsql-node-db > .tsql-tree-row.is-active .tsql-tree-label { font-weight: 600; }
 .tsql-node-db > .tsql-tree-row.is-active .tsql-caret,
 .tsql-node-db > .tsql-tree-row.is-active .tsql-tree-icon { color: var(--primary, #3b82f6); }
-/* SQL-driven navigation cue. When the user types a table name we know,
-   the matching row pulses in --ring for ~1.2 s, then settles into a
-   subtle border-left accent so the user can still see "this is what
-   the editor is talking about" without the row screaming. The pulse
-   uses box-shadow inset so it doesn't shift layout. */
-.tsql-tree-row.is-target { box-shadow: inset 2px 0 0 0 var(--ring, var(--primary, #3b82f6)); border-radius: 0; animation: tsql-target-pulse 1.2s ease-out 1; }
+/* Query cue: the table the running / typed statement references. Gives
+   query mode the same clear "this is the table" indication as browsing a
+   table (matching the open-table highlight: soft tint + flush left bar +
+   bold) so the two modes feel consistent. A one-shot pulse on first match
+   draws the eye and settles into the resting tint without flashing out. */
+.tsql-tree-row.is-target { background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent); color: var(--foreground); box-shadow: inset 2px 0 0 0 var(--primary, #3b82f6); border-radius: 0; animation: tsql-target-pulse 1.1s ease-out 1; }
+.tsql-tree-row.is-target .tsql-tree-label { font-weight: 600; }
+.tsql-tree-row.is-target .tsql-tree-icon, .tsql-tree-row.is-target .tsql-tree-meta { color: var(--foreground); }
 @keyframes tsql-target-pulse {
-  0%   { background: color-mix(in srgb, var(--primary, #3b82f6) 22%, transparent); }
-  60%  { background: color-mix(in srgb, var(--primary, #3b82f6) 12%, transparent); }
-  100% { background: transparent; }
+  0%   { background: color-mix(in srgb, var(--primary, #3b82f6) 30%, transparent); }
+  100% { background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent); }
 }
 .tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }
 .tsql-caret.is-open { transform: rotate(90deg); }

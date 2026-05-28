@@ -2,6 +2,22 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.30 (2026-05-28)
+
+- Feat: query mode now gets the same tree indication as browsing. When a
+  statement runs (or is typed), the table it references is highlighted in
+  the schema tree with the same calm cue as an open table (soft tint +
+  flush left bar + bold), so you can always see which table the result
+  belongs to. Previously only browsed tables were marked.
+- Style: browse and query highlights are mutually exclusive, so exactly
+  one table is ever in focus: opening a table clears the query cue, and
+  the query cue clears the browse highlight. Running a query drops the
+  now-stale browse highlight and marks the queried table.
+- Fix: the navigation pulse no longer re-fires on every keystroke when the
+  referenced table is unchanged, and it settles into the resting tint
+  instead of flashing out to transparent.
+- Verified browse vs query side-by-side with a rendered preview.
+
 ## 0.2.29 (2026-05-28)
 
 - Style: tone down the tree active highlight introduced in 0.2.28, which

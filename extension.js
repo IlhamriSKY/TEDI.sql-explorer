@@ -3559,7 +3559,7 @@ const STYLES_CSS = `
 /* Heidi-style result-grid toolbar: row-count + duration on the left,
    client-side search input + page navigation on the right. Wraps under
    the search on narrow widths so the controls never overlap.
-   `.tsql-meta--sticky` pins the bar to the top of the scrolling result
+   .tsql-meta--sticky pins the bar to the top of the scrolling result
    body so the user keeps the controls in view while scrolling. The
    1 px bottom divider matches the project's standard hairline. */
 .tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 6px 12px 6px 12px; row-gap: 6px; }
@@ -3587,7 +3587,7 @@ const STYLES_CSS = `
 .tsql-sql-preview { padding: 2px 12px 6px 12px; color: var(--muted-foreground); font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 /* Divider between the meta/search toolbar and the sticky table header
    so the two sections read as distinct bands instead of bleeding into
-   each other. Border-top is dropped here because `.tsql-meta--sticky`
+   each other. Border-top is dropped here because .tsql-meta--sticky
    already paints the 1 px hairline on its bottom edge, keeping the
    divider consistent across both result and table grids. */
 .tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }

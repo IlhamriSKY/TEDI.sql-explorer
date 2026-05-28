@@ -2,6 +2,19 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.26 (2026-05-28)
+
+- Fix: 0.2.25 activation crash. Two CSS comments inside `STYLES_CSS` wrapped
+  the `.tsql-meta--sticky` class name in literal backticks, which closed
+  the template-literal early and made the JS parser choke on the
+  following text ("Unexpected identifier 'sticky'"). Replaced with plain
+  text so the comments stay informative without breaking the template.
+  Same class of bug as v0.2.10, v0.2.16, and v0.2.21.
+- Change: `engines.tedi` raised to `>=0.3.9`. The new host API
+  `ctx.tabs.setExtensionTabState` shipped in 0.3.9 is required for the
+  workspace-tab tinting introduced in 0.2.24. Older hosts now refuse to
+  install instead of silently running against an incompatible surface.
+
 ## 0.2.25 (2026-05-28)
 
 - Feat: inline cell editor now picks a widget that matches the column

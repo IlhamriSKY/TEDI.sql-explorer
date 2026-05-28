@@ -63,7 +63,37 @@ const state = {
   /** Current CodeMirror editor mount, kept singleton across re-renders so
    *  we can dispose the previous EditorView before mounting a new one. */
   editorHandle: null,
+  /** Read-only CodeMirror mounts for the executed-SQL previews shown above
+   *  result grids. Tracked so we can destroy them before each re-render
+   *  instead of leaking an EditorView per query. */
+  previewEditors: [],
 };
+
+/** Destroy and forget any read-only SQL preview editors. Idempotent, so it
+ *  is safe to call at the top of every result renderer. */
+function disposePreviewEditors() {
+  for (const handle of state.previewEditors) {
+    try {
+      handle?.dispose?.();
+    } catch {
+      // ignore
+    }
+  }
+  state.previewEditors = [];
+}
+
+/** Map a connection's engine kind to the codeEditor language id used for
+ *  SQL syntax highlighting. Falls back to generic "sql". */
+function sqlLanguageForSession(session) {
+  const kind = state.connections.find((c) => c.id === session.connId)?.kind;
+  return kind === "mysql"
+    ? "sql:mysql"
+    : kind === "postgres"
+      ? "sql:postgres"
+      : kind === "sqlite"
+        ? "sql:sqlite"
+        : "sql";
+}
 
 /**
  * @typedef SessionState
@@ -169,6 +199,7 @@ export async function deactivate() {
       }
       state.editorHandle = null;
     }
+    disposePreviewEditors();
     if (sidecar?.baseUrl) {
       await fetchJson("/shutdown", { method: "POST", body: {} }).catch(() => {});
     }
@@ -779,8 +810,15 @@ function renderConnRow(c) {
 function connSubtitle(c) {
   const kind = KIND_LABEL[c.kind] || c.kind;
   if (c.kind === "sqlite") return `${kind} · ${c.host || c.database || "file"}`;
-  const tail = `${c.user ?? ""}@${c.host ?? ""}${c.port ? ":" + c.port : ""}/${c.database ?? ""}`;
-  return `${kind} · ${tail}`;
+  // Build the host/database tail from non-empty parts only. A connection
+  // with no user and no pinned database used to render dangling separators
+  // (e.g. "@127.0.0.1:3306/"); skipping empty segments keeps the subtitle
+  // clean as "MySQL · 127.0.0.1:3306" or "MySQL · root@127.0.0.1:3306/app".
+  const user = c.user ? `${c.user}@` : "";
+  const port = c.port ? `:${c.port}` : "";
+  const db = c.database ? `/${c.database}` : "";
+  const tail = `${user}${c.host ?? ""}${port}${db}`;
+  return tail ? `${kind} · ${tail}` : kind;
 }
 
 // ----------------------------- Connection dialog -----------------------------
@@ -1727,6 +1765,11 @@ function renderTreePane(session) {
   head.appendChild(searchWrap);
   wrap.appendChild(head);
   const list = el("ul", { class: "tsql-tree-list" });
+  // Depth drives the per-row left padding so the hover/active background
+  // spans the full pane width while the label stays visually indented.
+  // Root databases sit at depth 0; child lists bump it (see renderDbNode /
+  // renderSchemaNode). The value inherits down to each .tsql-tree-row.
+  list.style.setProperty("--tsql-depth", "0");
   wrap.appendChild(list);
   loadDatabases(session, list)
     .then(() => {
@@ -1800,6 +1843,8 @@ function renderDbNode(session, dbName) {
   );
   li.appendChild(head);
   const childList = el("ul", { class: "tsql-tree-children" });
+  // Schemas / tables under a database render one indent level in.
+  childList.style.setProperty("--tsql-depth", "1");
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
@@ -1898,6 +1943,8 @@ function renderSchemaNode(session, dbName, schemaName) {
   );
   li.appendChild(head);
   const childList = el("ul", { class: "tsql-tree-children" });
+  // Tables under a multi-schema database render two indent levels in.
+  childList.style.setProperty("--tsql-depth", "2");
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
@@ -2056,19 +2103,12 @@ function renderEditorAndResults(session) {
     }
     state.editorHandle = null;
   }
+  disposePreviewEditors();
 
   const editorWrap = el("div", { class: "tsql-editor" });
   wrap.appendChild(editorWrap);
 
-  const connKind = state.connections.find((c) => c.id === session.connId)?.kind;
-  const language =
-    connKind === "mysql"
-      ? "sql:mysql"
-      : connKind === "postgres"
-        ? "sql:postgres"
-        : connKind === "sqlite"
-          ? "sql:sqlite"
-          : "sql";
+  const language = sqlLanguageForSession(session);
 
   try {
     state.editorHandle = ctx.ui.codeEditor(editorWrap, {
@@ -2180,11 +2220,13 @@ function renderEditorAndResults(session) {
 
 function renderQueryResult(container, session) {
   clearChildren(container);
+  disposePreviewEditors();
   if (!session.result?.statements?.length) {
     container.appendChild(el("p", { class: "tsql-empty", text: "No statements ran." }));
     return;
   }
   const statements = session.result.statements;
+  const language = sqlLanguageForSession(session);
   const content = el("div", { class: "tsql-result-body" });
   // Hide the tab strip for the common single-statement case so the meta
   // line in renderStatementDetail can carry the row count + duration on
@@ -2200,7 +2242,7 @@ function renderQueryResult(container, session) {
           click: () => {
             tabs.querySelectorAll(".tsql-result-tab").forEach((t) => t.classList.remove("is-active"));
             tab.classList.add("is-active");
-            renderStatementDetail(content, stmt);
+            renderStatementDetail(content, stmt, language);
           },
         },
       });
@@ -2209,7 +2251,7 @@ function renderQueryResult(container, session) {
     container.appendChild(tabs);
   }
   container.appendChild(content);
-  renderStatementDetail(content, statements[0]);
+  renderStatementDetail(content, statements[0], language);
 }
 
 function tabLabel(stmt) {
@@ -2218,8 +2260,12 @@ function tabLabel(stmt) {
   return `error · ${stmt.elapsed_ms} ms`;
 }
 
-function renderStatementDetail(container, stmt) {
+function renderStatementDetail(container, stmt, language) {
   clearChildren(container);
+  // Re-rendering this slot (fresh result or a statement-tab switch) drops
+  // the prior preview editor's DOM; destroy the EditorView too so it
+  // doesn't linger.
+  disposePreviewEditors();
   if (stmt.kind === "rows") {
     renderResultGrid(container, {
       sql: stmt.sql,
@@ -2227,6 +2273,7 @@ function renderStatementDetail(container, stmt) {
       rows: stmt.rows,
       elapsedMs: stmt.elapsed_ms,
       truncated: stmt.truncated,
+      language,
     });
     return;
   }
@@ -2236,7 +2283,7 @@ function renderStatementDetail(container, stmt) {
       el("span", { text: `${stmt.rows_affected} affected · ${stmt.elapsed_ms} ms` }),
     );
     container.appendChild(meta);
-    container.appendChild(renderSqlPreview(stmt.sql));
+    container.appendChild(renderSqlPreview(stmt.sql, language));
     return;
   }
   if (stmt.kind === "error") {
@@ -2246,20 +2293,32 @@ function renderStatementDetail(container, stmt) {
     );
     container.appendChild(meta);
     container.appendChild(el("pre", { class: "tsql-error-text", text: stmt.error }));
-    container.appendChild(renderSqlPreview(stmt.sql));
+    container.appendChild(renderSqlPreview(stmt.sql, language));
   }
 }
 
-// SQL preview bar shown above the grid so the user can see exactly what
-// statement produced the displayed rows. Useful for table-viewer rows
-// (SQL is generated by the sidecar) and for keeping the user oriented
-// when a result lingers after they edit the editor buffer.
-function renderSqlPreview(sql) {
-  return el("div", {
-    class: "tsql-sql-preview",
-    attrs: { title: sql },
-    text: sql,
-  });
+// SQL preview shown above the grid so the user can see exactly what
+// statement produced the displayed rows. Rendered as a read-only,
+// syntax-highlighted CodeMirror so it reads as real code (mono font,
+// keyword/string/number colors) instead of a cramped grey strip. Falls
+// back to a plain text line on hosts without ctx.ui.codeEditor.
+function renderSqlPreview(sql, language) {
+  const text = String(sql ?? "");
+  if (ctx?.ui?.codeEditor) {
+    const wrap = el("div", { class: "tsql-sql-editor", attrs: { title: text } });
+    try {
+      const handle = ctx.ui.codeEditor(wrap, {
+        language: language ?? "sql",
+        value: text,
+        readOnly: true,
+      });
+      state.previewEditors.push(handle);
+      return wrap;
+    } catch (err) {
+      ctx?.logger?.warn?.("sql preview editor mount failed", err);
+    }
+  }
+  return el("div", { class: "tsql-sql-preview", attrs: { title: text }, text });
 }
 
 // ----------------------------- Query result grid -----------------------------
@@ -2271,124 +2330,116 @@ function renderSqlPreview(sql) {
 const GRID_PAGE_SIZE = 100;
 
 function renderResultGrid(container, opts) {
-  const { sql, columns, rows, elapsedMs, truncated } = opts;
-  const state = {
+  const { sql, columns, rows, elapsedMs, truncated, language } = opts;
+  const grid = {
     query: "",
     page: 0,
     filtered: rows,
   };
+  let searchTimer = null;
 
-  // Meta bar: left = "N rows · X ms · truncated?", right = search +
-  // pagination controls. Sticky to the top of the body so the controls
-  // stay reachable while the user scrolls through long results.
+  // Meta bar: row count + duration on the left, search on the right.
+  // Pagination is no longer crammed into this bar; it lives in a bottom
+  // footer so the layout mirrors the table-browse view. Sticky so the
+  // controls stay reachable while the result scrolls.
   const metaBar = el("div", { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky" });
   const leftMeta = el("span", { class: "tsql-grid-meta-left" });
   metaBar.appendChild(leftMeta);
 
-  const rightMeta = el("span", { class: "tsql-grid-meta-right" });
-  const searchInput = el("input", {
-    class: "tsql-input tsql-grid-search",
-    attrs: {
-      type: "search",
-      placeholder: "Search rows…",
-      "aria-label": "Search rows on this page",
+  // Shared search input + HugeIcon clear (X) button: the same component
+  // the table-browse view uses, so the reset affordance matches everywhere.
+  const { wrap: searchWrap } = makeSearchInput({
+    placeholder: "Search rows…",
+    ariaLabel: "Search rows on this page",
+    inputClass: "tsql-input tsql-grid-search",
+    wrapClass: "tsql-search-wrap--grid",
+    initialValue: "",
+    onInput: (val) => {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        searchTimer = null;
+        applyFilter(val.trim());
+      }, 160);
     },
   });
-  rightMeta.appendChild(searchInput);
-  const pagerSlot = el("span", { class: "tsql-grid-pager" });
-  rightMeta.appendChild(pagerSlot);
-  metaBar.appendChild(rightMeta);
+  metaBar.appendChild(el("span", { class: "tsql-grid-meta-right" }, searchWrap));
   container.appendChild(metaBar);
 
-  // Running-SQL preview lives between the meta bar and the table so the
-  // user always sees the statement that produced the rows below.
-  container.appendChild(renderSqlPreview(sql));
+  // Executed statement, rendered as a read-only syntax-highlighted editor
+  // so the user always sees exactly what produced the rows below.
+  container.appendChild(renderSqlPreview(sql, language));
 
   const gridSlot = el("div", { class: "tsql-grid-slot" });
   container.appendChild(gridSlot);
 
+  // Bottom pager footer: same chrome (.tsql-pager + Prev / label / Next)
+  // as renderPager so paginated query results read identically to the
+  // table-browse view.
+  const pager = el("footer", { class: "tsql-pager" });
+  container.appendChild(pager);
+
   function applyFilter(q) {
-    state.query = q;
-    state.page = 0;
+    grid.query = q;
+    grid.page = 0;
     if (!q) {
-      state.filtered = rows;
+      grid.filtered = rows;
     } else {
       const needle = q.toLowerCase();
-      state.filtered = rows.filter((row) => rowMatches(row, needle));
+      grid.filtered = rows.filter((row) => rowMatches(row, needle));
     }
     redraw();
   }
 
   function redraw() {
-    const total = state.filtered.length;
+    const total = grid.filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / GRID_PAGE_SIZE));
-    if (state.page >= totalPages) state.page = totalPages - 1;
-    const start = state.page * GRID_PAGE_SIZE;
-    const slice = state.filtered.slice(start, start + GRID_PAGE_SIZE);
+    if (grid.page >= totalPages) grid.page = totalPages - 1;
+    const start = grid.page * GRID_PAGE_SIZE;
+    const slice = grid.filtered.slice(start, start + GRID_PAGE_SIZE);
 
     leftMeta.replaceChildren();
-    const baseInfo = state.query
+    const baseInfo = grid.query
       ? `${total.toLocaleString()} of ${rows.length.toLocaleString()} rows match`
       : `${rows.length.toLocaleString()} rows`;
     leftMeta.appendChild(document.createTextNode(`${baseInfo} · ${elapsedMs} ms`));
-    if (truncated && !state.query) {
-      const tag = el("span", { class: "tsql-tag tsql-tag--warn", text: "truncated" });
-      leftMeta.appendChild(tag);
-    }
-
-    pagerSlot.replaceChildren();
-    if (total > GRID_PAGE_SIZE) {
-      const from = start + 1;
-      const to = Math.min(start + GRID_PAGE_SIZE, total);
-      const prev = el("button", {
-        class: "tsql-btn tsql-pager-btn",
-        attrs: { type: "button", "aria-label": "Previous page" },
-        text: "‹",
-        on: {
-          click: () => {
-            if (state.page > 0) {
-              state.page -= 1;
-              redraw();
-            }
-          },
-        },
-      });
-      if (state.page === 0) prev.setAttribute("disabled", "true");
-      const next = el("button", {
-        class: "tsql-btn tsql-pager-btn",
-        attrs: { type: "button", "aria-label": "Next page" },
-        text: "›",
-        on: {
-          click: () => {
-            if (state.page < totalPages - 1) {
-              state.page += 1;
-              redraw();
-            }
-          },
-        },
-      });
-      if (state.page >= totalPages - 1) next.setAttribute("disabled", "true");
-      pagerSlot.appendChild(prev);
-      pagerSlot.appendChild(
-        el("span", {
-          class: "tsql-pager-info",
-          text: `${from.toLocaleString()}–${to.toLocaleString()} / ${total.toLocaleString()}`,
-        }),
-      );
-      pagerSlot.appendChild(next);
+    if (truncated && !grid.query) {
+      leftMeta.appendChild(el("span", { class: "tsql-tag tsql-tag--warn", text: "truncated" }));
     }
 
     gridSlot.replaceChildren(buildGridTable(columns, slice));
-  }
 
-  let searchTimer = null;
-  searchInput.addEventListener("input", () => {
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      searchTimer = null;
-      applyFilter(searchInput.value.trim());
-    }, 160);
-  });
+    const hasPrev = grid.page > 0;
+    const hasNext = grid.page < totalPages - 1;
+    pager.replaceChildren();
+    pager.appendChild(
+      textBtn("Prev", "ArrowLeft01Icon", {
+        title: "Previous page",
+        disabled: !hasPrev,
+        onClick: () => {
+          if (!hasPrev) return;
+          grid.page -= 1;
+          redraw();
+        },
+      }),
+    );
+    pager.appendChild(
+      el("span", {
+        class: "tsql-pager-label",
+        text: `Page ${grid.page + 1} / ${totalPages}`,
+      }),
+    );
+    const nextBtn = textBtn("Next", null, {
+      title: "Next page",
+      disabled: !hasNext,
+      onClick: () => {
+        if (!hasNext) return;
+        grid.page += 1;
+        redraw();
+      },
+    });
+    appendIcon(nextBtn, "ArrowRight01Icon", { size: 13 });
+    pager.appendChild(nextBtn);
+  }
 
   redraw();
 }
@@ -2541,6 +2592,7 @@ async function loadTableRows(session, page) {
 
 function renderTableGrid(container, session) {
   clearChildren(container);
+  disposePreviewEditors();
   const snap = session.tableSnapshot;
   const target = session.activeTable;
   if (!snap) {
@@ -3480,9 +3532,13 @@ const STYLES_CSS = `
 .tsql-search-clear:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
 .tsql-search-clear > svg, .tsql-search-clear > * { display: block; flex: 0 0 auto; pointer-events: none; }
 .tsql-tree-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; list-style: none; margin: 0; padding: 0 0 4px; min-height: 0; }
-.tsql-tree-children { list-style: none; margin: 0; padding: 0 0 0 14px; }
+/* Nesting no longer indents via the list's left padding; instead each row
+   carries a depth-based left padding (see .tsql-tree-row) so the row's
+   full-width background (hover / active) reaches the pane's left edge
+   while the label stays visually indented. */
+.tsql-tree-children { list-style: none; margin: 0; padding: 0; }
 .tsql-tree-node { padding: 0; }
-.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: var(--radius, 0); outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
+.tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px 4px calc(8px + var(--tsql-depth, 0) * 14px); background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: var(--radius, 0); outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-tree-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); }
 .tsql-tree-row:focus-visible { background: var(--accent, rgba(127,127,127,0.12)); }
 .tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); }
@@ -3504,8 +3560,8 @@ const STYLES_CSS = `
 .tsql-tree-row:hover .tsql-tree-icon, .tsql-tree-row:hover .tsql-caret { color: var(--foreground); }
 .tsql-tree-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tsql-tree-meta { font-size: 10px; color: var(--muted-foreground); padding-left: 8px; }
-.tsql-tree-error { padding: 4px 12px; color: var(--destructive, #ef4444); font-size: 11px; }
-.tsql-tree-empty { padding: 4px 16px; color: var(--muted-foreground); font-size: 11px; }
+.tsql-tree-error { padding: 4px 12px 4px calc(12px + var(--tsql-depth, 0) * 14px); color: var(--destructive, #ef4444); font-size: 11px; }
+.tsql-tree-empty { padding: 4px 16px 4px calc(16px + var(--tsql-depth, 0) * 14px); color: var(--muted-foreground); font-size: 11px; }
 
 .tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
@@ -3565,7 +3621,6 @@ const STYLES_CSS = `
 .tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 6px 12px 6px 12px; row-gap: 6px; }
 .tsql-grid-meta-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .tsql-grid-meta-right { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
-.tsql-grid-meta .tsql-input.tsql-grid-search { width: 200px; padding: 4px 10px; }
 .tsql-meta--sticky {
   position: sticky;
   top: 0;
@@ -3573,9 +3628,6 @@ const STYLES_CSS = `
   background: var(--card, var(--background));
   border-bottom: 1px solid var(--border);
 }
-.tsql-grid-pager { display: inline-flex; align-items: center; gap: 4px; }
-.tsql-pager-info { color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-size: 11px; min-width: 80px; text-align: center; }
-.tsql-btn.tsql-pager-btn { padding: 0 6px; min-width: 24px; height: 24px; font-size: 13px; line-height: 1; }
 /* Small status pill rendered alongside the row count (e.g. "truncated"
    when the sidecar capped the result). Borrow the host's --warning
    palette so it reads as a soft amber tag, not an error. */
@@ -3583,8 +3635,16 @@ const STYLES_CSS = `
 .tsql-tag--warn { background: color-mix(in srgb, var(--tedi-icon-working, #f59e0b) 18%, transparent); color: var(--tedi-icon-working, #f59e0b); }
 /* SQL preview strip above the grid so the user always sees the
    statement that produced the displayed rows. Single line with
-   ellipsis; the full SQL is in the title attribute. */
+   ellipsis; the full SQL is in the title attribute. Used as the
+   fallback when ctx.ui.codeEditor is unavailable. */
 .tsql-sql-preview { padding: 2px 12px 6px 12px; color: var(--muted-foreground); font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+/* Read-only, syntax-highlighted preview of the executed statement. Sizes
+   to its content (auto-height CodeMirror) and caps tall multi-statement
+   SQL with an internal scroll; the 1 px bottom hairline separates it from
+   the result grid below. */
+.tsql-sql-editor { flex: 0 0 auto; max-height: 132px; overflow: auto; border-bottom: 1px solid var(--border); background: var(--background); }
+.tsql-sql-editor .cm-editor { height: auto; }
+.tsql-sql-editor .cm-content { padding: 6px 0; }
 /* Divider between the meta/search toolbar and the sticky table header
    so the two sections read as distinct bands instead of bleeding into
    each other. Border-top is dropped here because .tsql-meta--sticky
@@ -3593,12 +3653,12 @@ const STYLES_CSS = `
 .tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .tsql-grid-slot > .tsql-grid-wrap { flex: 1 1 auto; }
 
-/* Result / table grid — sticky header with subtle shadow, zebra rows,
-   no horizontal overflow surprise. */
+/* Result / table grid: sticky header with a single 1px bottom hairline,
+   zebra rows, no horizontal overflow surprise. */
 .tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
 .tsql-grid-wrap.is-editable { border-top: 0; }
 .tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
-.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; box-shadow: 0 1px 0 0 var(--border); user-select: none; }
+.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; user-select: none; }
 /* Sortable header: click cycles unset -> asc -> desc -> unset. The
    arrow span sits at the end of the cell; empty text reserves nothing
    so unsorted headers stay flush. */

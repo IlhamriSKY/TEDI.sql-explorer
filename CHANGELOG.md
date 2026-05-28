@@ -2,6 +2,33 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.27 (2026-05-28)
+
+- Fix: connection rail subtitle no longer renders dangling separators when
+  a connection has no user and no pinned database. The host/database tail
+  is now built from non-empty parts only, so it reads "MySQL · 127.0.0.1:3306"
+  instead of "MySQL · @127.0.0.1:3306/".
+- Style: schema-tree rows span the full pane width so the hover / active
+  background reaches the left edge on nested schema and table rows.
+  Indentation moved off the child list's left padding onto a depth-based
+  left padding on each row (CSS var `--tsql-depth`), keeping the same
+  visual indent while the row background fills the gutter.
+- Style: result and table grid header divider is a single 1 px hairline.
+  Removed the `box-shadow` on the sticky `thead th` that stacked a second
+  line under the existing `border-bottom`.
+- Feat: free-form query-result view now mirrors the table-browse view.
+  The row search uses the shared clear (X) button instead of the browser
+  native `type=search` control; pagination moved from the cramped top-right
+  inline control into a bottom footer (Prev / Page X / Y / Next).
+- Feat: the executed statement above a result grid renders in a read-only,
+  syntax-highlighted code editor (`ctx.ui.codeEditor` with `readOnly`)
+  instead of a single-line grey text strip, so the SQL reads as real code
+  and stays selectable. Falls back to the plain text strip on hosts without
+  the code-editor API.
+- Chore: read-only preview editors are tracked and disposed on every
+  re-render, statement-tab switch, and deactivate so they no longer leak an
+  EditorView per query.
+
 ## 0.2.26 (2026-05-28)
 
 - Fix: 0.2.25 activation crash. Two CSS comments inside `STYLES_CSS` wrapped

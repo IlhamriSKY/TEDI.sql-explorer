@@ -2,6 +2,42 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.25 (2026-05-28)
+
+- Feat: inline cell editor now picks a widget that matches the column
+  type instead of always rendering a plain text input. Booleans become a
+  dropdown (NULL / true / false where the column is nullable), ENUM
+  columns become a dropdown of their declared options, DATE/TIME/DATETIME
+  use the native HTML date / time / datetime-local pickers, integer /
+  decimal columns use a `<input type="number">` with the right step, and
+  JSON columns get a 3-row textarea (Shift+Enter for newlines). Binary
+  cells now warn instead of opening an edit input that can't round-trip.
+- Feat: table-view header reorganised to match the query-result grid.
+  Left side carries `{schema.table} · {N} rows · {ms} ms`; right side
+  collects every filter and action (search, column filter, Row, Reload,
+  Close). The bar is sticky to the top of the results body so the
+  controls follow the user when the table scrolls. Same treatment is
+  applied to the free-form query result grid.
+- Style: meta-bar gets a 1 px hairline divider against the table below
+  it, replacing the previous border-top on `.tsql-grid-slot`. Keeps the
+  divider consistent across both grids and matches TEDI core's 1 px
+  separator convention.
+- Style: native calendar / clock indicators inside the cell editors now
+  inherit the host's foreground tint so they don't render as bright OS
+  white squares on dark themes.
+
+## 0.2.24 (2026-05-28)
+
+- Feat: workspace tab title now tints with the active connection's
+  lifecycle, mirroring the SSH tab palette. Yellow + pulse while
+  connecting, green when connected, red on disconnect / error. Drives
+  the new host API `ctx.tabs.setExtensionTabState(...)`; gracefully
+  no-ops on older TEDI builds that lack the API.
+- Style: divider line between the schema-tree search input and the
+  database list so the sticky head reads as its own band.
+- Style: divider line between the Run / Stop / Export toolbar and the
+  query editor so the action row separates cleanly from the buffer.
+
 ## 0.2.23 (2026-05-28)
 
 - Feat: query-result grid is paginated client-side (100 rows per page)

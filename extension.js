@@ -160,6 +160,7 @@ export async function activate(context) {
 
 export async function deactivate() {
   try {
+    setTabState(null);
     if (state.editorHandle?.dispose) {
       try {
         state.editorHandle.dispose();
@@ -194,6 +195,25 @@ function checkRequiredApis(c) {
   if (typeof c?.secrets?.set !== "function") missing.push("ctx.secrets");
   if (typeof c?.settings?.set !== "function") missing.push("ctx.settings");
   return missing;
+}
+
+/**
+ * Tints the workspace tab title with a lifecycle tone matching the SSH
+ * palette: yellow while connecting, green when connected, red on
+ * disconnect/error. Safe no-op on older hosts that predate the API.
+ *
+ * @param {"idle"|"connecting"|"reconnecting"|"connected"|"disconnected"|"error"|null} state
+ */
+function setTabState(state) {
+  try {
+    ctx?.tabs?.setExtensionTabState?.({
+      panelId: PANEL_ID,
+      reuseKey: "main",
+      state,
+    });
+  } catch (err) {
+    ctx?.logger?.warn?.("setExtensionTabState failed", err);
+  }
 }
 
 // ----------------------------- Sidecar boot ----------------------------------
@@ -1290,7 +1310,10 @@ async function deleteConnection(id) {
   } catch {
     /* silent: pool may not be open */
   }
-  if (state.active === id) state.active = null;
+  if (state.active === id) {
+    state.active = null;
+    setTabState("disconnected");
+  }
   delete state.sessions[id];
   rerender();
 }
@@ -1427,19 +1450,25 @@ async function selectConnection(id) {
   // every saved connection on startup.
   await ensureSidecar();
   const conn = state.connections.find((c) => c.id === id);
-  if (!conn) return;
+  if (!conn) {
+    setTabState("disconnected");
+    return;
+  }
   const conns = await fetchJson("/connections").catch(() => null);
   const alreadyOpen = conns?.connections?.some((c) => c.id === id);
   if (!alreadyOpen) {
+    setTabState("connecting");
     const password = conn.kind === "sqlite" ? "" : (await getSecret(id)) ?? "";
     try {
       await connectFromForm({ ...conn, password, sqlitePath: conn.host || conn.database || "" });
     } catch (err) {
       safeToast(`Connect failed: ${err?.message ?? err}`, "error");
+      setTabState("error");
       return;
     }
   }
   ensureSession(id);
+  setTabState("connected");
   rerender();
 }
 
@@ -2250,8 +2279,9 @@ function renderResultGrid(container, opts) {
   };
 
   // Meta bar: left = "N rows · X ms · truncated?", right = search +
-  // pagination controls. Stays sticky-ish at the top of the body.
-  const metaBar = el("div", { class: "tsql-result-meta tsql-grid-meta" });
+  // pagination controls. Sticky to the top of the body so the controls
+  // stay reachable while the user scrolls through long results.
+  const metaBar = el("div", { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky" });
   const leftMeta = el("span", { class: "tsql-grid-meta-left" });
   metaBar.appendChild(leftMeta);
 
@@ -2479,8 +2509,14 @@ async function loadTableRows(session, page) {
     }
   }
   try {
+    // Client-side timing: /table-rows doesn't return elapsed_ms today,
+    // so we measure round-trip locally. Captures network + decode, which
+    // is the user-visible "how long did the table take to load" anyway.
+    const startedAt = performance.now();
     const resp = await fetchJson("/table-rows", { method: "POST", body });
+    const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
     session.tableSnapshot = resp.result;
+    if (session.tableSnapshot) session.tableSnapshot.elapsed_ms = elapsedMs;
     // Update the autocomplete cache with the columns we just learned.
     // Subsequent keystrokes in the query editor immediately see them.
     if (resp.result?.columns?.length) {
@@ -2541,19 +2577,29 @@ function renderTableGrid(container, session) {
   });
   colSelect.classList.add("tsql-grid-colfilter");
 
+  // HeidiSQL-style meta bar: title + row count + load duration on the
+  // left, every filter / action on the right. Sticky to the top of the
+  // results body so the controls follow the user when the table scrolls.
+  const tableLabel =
+    target.database === target.schema ? target.table : `${target.schema}.${target.table}`;
+  const rowsLabel = snap.total != null
+    ? `${snap.total.toLocaleString()} rows`
+    : `${snap.rows.length.toLocaleString()} rows`;
+  const elapsedLabel =
+    typeof snap.elapsed_ms === "number" ? ` · ${snap.elapsed_ms} ms` : "";
   container.appendChild(
     el(
-      "header",
-      { class: "tsql-subheader" },
+      "div",
+      { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky" },
       el(
         "span",
-        { class: "tsql-table-title" },
-        target.database === target.schema ? target.table : `${target.schema}.${target.table}`,
-        snap.total != null ? ` · ${snap.total} rows` : "",
+        { class: "tsql-grid-meta-left" },
+        el("span", { class: "tsql-table-title", text: tableLabel }),
+        document.createTextNode(` · ${rowsLabel}${elapsedLabel}`),
       ),
       el(
-        "div",
-        { class: "tsql-toolbar" },
+        "span",
+        { class: "tsql-grid-meta-right" },
         searchWrap,
         colSelect,
         textBtn("Row", "Add01Icon", {
@@ -2694,6 +2740,95 @@ function renderPager(session, snap) {
   return pager;
 }
 
+/**
+ * Map a `ColumnInfo` (from `/columns`) to one of the typed cell editor
+ * widgets. Recognises:
+ *   - boolean      → MySQL `tinyint(1)`, `bool`, `boolean`; PG `bool`
+ *   - date         → `date`
+ *   - time         → `time`, `timetz`
+ *   - datetime     → MySQL `datetime` / `timestamp`; PG `timestamp(tz)`
+ *   - integer      → `int*`, `smallint`, `tinyint`, `bigint`, `serial*`, `year`
+ *   - number       → `float`, `double`, `real`, `decimal`, `numeric`, `money`
+ *   - json         → `json`, `jsonb`
+ *   - bytes        → `binary`, `varbinary`, `*blob*`, `bytea`
+ *   - { kind: "enum", options } → MySQL `enum('a','b',...)`
+ *   - text         → everything else (varchar, char, text, uuid, ...)
+ *
+ * Pass either the column info object or `null` when the type is unknown
+ * (falls back to `"text"`).
+ */
+function classifyColumnType(colInfo) {
+  const dt = String(colInfo?.data_type ?? "").toLowerCase();
+  const ft = String(colInfo?.full_type ?? "").toLowerCase();
+  if (!dt && !ft) return "text";
+  if (dt === "bool" || dt === "boolean") return "boolean";
+  // MySQL convention: TINYINT(1) is the canonical bool storage.
+  if (dt === "tinyint" && /\btinyint\(1\)/.test(ft)) return "boolean";
+  // ENUM('a','b','c') → dropdown sourced from the type spec.
+  if (dt === "enum") {
+    const m = ft.match(/^enum\((.+)\)$/);
+    if (m) {
+      const opts = [];
+      const re = /'((?:[^']|'')*)'/g;
+      let mm;
+      while ((mm = re.exec(m[1])) !== null) opts.push(mm[1].replace(/''/g, "'"));
+      if (opts.length) return { kind: "enum", options: opts };
+    }
+  }
+  if (dt === "date") return "date";
+  if (dt === "time" || dt === "timetz" || dt.startsWith("time without")) return "time";
+  if (
+    dt === "datetime" ||
+    dt === "timestamp" ||
+    dt === "timestamptz" ||
+    dt.startsWith("timestamp ")
+  ) {
+    return "datetime";
+  }
+  if (/^(smallint|mediumint|int|integer|bigint|tinyint|int2|int4|int8|serial|smallserial|bigserial|year)$/.test(dt)) {
+    return "integer";
+  }
+  if (/^(float|double|real|float4|float8|decimal|numeric|money)$/.test(dt)) {
+    return "number";
+  }
+  if (/json/.test(dt)) return "json";
+  if (/binary|blob|bytea/.test(dt)) return "bytes";
+  return "text";
+}
+
+/** True iff the snapshot row value is a "binary chip" marker. */
+function isBytesCell(value) {
+  return value && typeof value === "object" && value.__type === "bytes";
+}
+
+/** Convert a server-side ISO timestamp to the format the matching HTML5
+ *  input expects. `kind` is one of `"date" | "time" | "datetime"`. */
+function isoToInputValue(kind, value) {
+  if (value == null) return "";
+  const s = String(value);
+  if (kind === "date") return s.slice(0, 10);
+  if (kind === "time") {
+    // Accept "HH:MM:SS" or "HH:MM:SS.sss" or full ISO; trim to "HH:MM:SS".
+    const m = s.match(/(\d{2}:\d{2}:\d{2})/);
+    return m ? m[1] : s;
+  }
+  // datetime: drop any TZ suffix; datetime-local needs YYYY-MM-DDTHH:MM(:SS).
+  const t = s.replace(/[zZ]$/, "").replace(/[+-]\d{2}:?\d{2}$/, "");
+  // Convert "YYYY-MM-DD HH:MM:SS" → "YYYY-MM-DDTHH:MM:SS" for the input.
+  return t.includes("T") ? t : t.replace(" ", "T");
+}
+
+/** Convert the value coming out of an HTML5 date/time/datetime input back
+ *  to the canonical text representation the SQL backend accepts. */
+function inputValueToIso(kind, value) {
+  if (value === "") return null;
+  if (kind === "date") return value; // YYYY-MM-DD
+  if (kind === "time") return value; // HH:MM(:SS)
+  // datetime-local: "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS".
+  // MySQL DATETIME accepts both with " " or "T"; keep "T" for clarity.
+  return value;
+}
+
 async function beginCellEdit(session, rowIdx, colIdx, td) {
   const snap = session.tableSnapshot;
   if (!snap) return;
@@ -2703,28 +2838,30 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
     return;
   }
   const original = snap.rows[rowIdx][colIdx];
-  const input = el("input", { class: "tsql-input tsql-cell-input" });
-  input.value = original == null ? "" : typeof original === "object" ? JSON.stringify(original) : String(original);
-  clearChildren(td);
-  td.appendChild(input);
-  input.focus();
-  input.select();
+  // Bytes cells can't be edited inline. Bail with a hint so the user
+  // doesn't end up with an empty text input that can never round-trip.
+  if (isBytesCell(original)) {
+    safeToast("Binary cells aren't editable inline yet.", "warning");
+    return;
+  }
+  const col = snap.columns[colIdx];
+  const colInfo = (session._pkCache?.columns ?? []).find((c) => c.name === col) ?? null;
+  const type = classifyColumnType(colInfo);
+  const nullable = colInfo ? colInfo.nullable !== false : true;
 
-  const commit = async () => {
-    if (input.dataset.done) return;
-    input.dataset.done = "1";
-    const next = parseEditedValue(input.value, original);
+  const commitWith = async (next) => {
     if (deepEqual(next, original)) {
       td.replaceChildren(renderCellContent(original));
+      td.title = cellTooltip(original);
       return;
     }
-    const col = snap.columns[colIdx];
     const pkMap = {};
     for (const pk of pks) {
       const idx = snap.columns.indexOf(pk);
       if (idx < 0) {
         safeToast(`Primary key ${pk} not in current grid; refresh first.`, "warning");
         td.replaceChildren(renderCellContent(original));
+        td.title = cellTooltip(original);
         return;
       }
       pkMap[pk] = snap.rows[rowIdx][idx];
@@ -2743,26 +2880,184 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
       });
       snap.rows[rowIdx][colIdx] = next;
       td.replaceChildren(renderCellContent(next));
+      td.title = cellTooltip(next);
       td.classList.add("tsql-cell-saved");
       setTimeout(() => td.classList.remove("tsql-cell-saved"), 800);
     } catch (err) {
       td.replaceChildren(renderCellContent(original));
+      td.title = cellTooltip(original);
       safeToast(`Update failed: ${err?.message ?? err}`, "error");
     }
   };
 
-  input.addEventListener("blur", commit);
-  input.addEventListener("keydown", (event) => {
+  const cancel = () => {
+    td.replaceChildren(renderCellContent(original));
+    td.title = cellTooltip(original);
+  };
+
+  // Render the typed editor. Each branch returns the editor element so
+  // we can focus it after mount; commit/cancel wiring is centralised
+  // below for keystroke + blur consistency.
+  let editor;
+  let resolveValue;
+  let committedOnChange = false;
+
+  const enumType =
+    type && typeof type === "object" && type.kind === "enum" ? type : null;
+
+  if (type === "boolean") {
+    editor = el("select", { class: "tsql-input tsql-cell-input tsql-cell-input--bool" });
+    const opts = [];
+    if (nullable) opts.push({ value: "__null__", label: "(NULL)" });
+    opts.push({ value: "true", label: "true" }, { value: "false", label: "false" });
+    for (const o of opts) {
+      const node = el("option", { attrs: { value: o.value }, text: o.label });
+      editor.appendChild(node);
+    }
+    // Original may be `true` / `false` / `null` / `0` / `1`.
+    const initial =
+      original === null || original === undefined
+        ? nullable
+          ? "__null__"
+          : "false"
+        : original === true || original === 1 || original === "1"
+          ? "true"
+          : original === false || original === 0 || original === "0"
+            ? "false"
+            : nullable
+              ? "__null__"
+              : "false";
+    editor.value = initial;
+    resolveValue = () => {
+      const v = editor.value;
+      if (v === "__null__") return null;
+      if (v === "true") {
+        // MySQL TINYINT(1) round-trips through i64; send 1/0 so the
+        // sqlx Number path binds an integer instead of a bool that the
+        // driver might reject on a numeric column.
+        const isTiny = String(colInfo?.data_type ?? "").toLowerCase() === "tinyint";
+        return isTiny ? 1 : true;
+      }
+      const isTiny = String(colInfo?.data_type ?? "").toLowerCase() === "tinyint";
+      return isTiny ? 0 : false;
+    };
+    // For dropdowns, commit on change so the user doesn't have to tab out.
+    editor.addEventListener("change", () => {
+      committedOnChange = true;
+      commitWith(resolveValue());
+    });
+  } else if (enumType) {
+    editor = el("select", { class: "tsql-input tsql-cell-input tsql-cell-input--enum" });
+    if (nullable) {
+      editor.appendChild(el("option", { attrs: { value: "__null__" }, text: "(NULL)" }));
+    }
+    for (const opt of enumType.options) {
+      editor.appendChild(el("option", { attrs: { value: opt }, text: opt }));
+    }
+    editor.value = original == null ? (nullable ? "__null__" : enumType.options[0]) : String(original);
+    resolveValue = () => {
+      const v = editor.value;
+      return v === "__null__" ? null : v;
+    };
+    editor.addEventListener("change", () => {
+      committedOnChange = true;
+      commitWith(resolveValue());
+    });
+  } else if (type === "date" || type === "time" || type === "datetime") {
+    const htmlType =
+      type === "date" ? "date" : type === "time" ? "time" : "datetime-local";
+    editor = el("input", {
+      class: `tsql-input tsql-cell-input tsql-cell-input--${type}`,
+      attrs: { type: htmlType, step: type === "date" ? undefined : "1" },
+    });
+    editor.value = isoToInputValue(type, original);
+    resolveValue = () => inputValueToIso(type, editor.value);
+  } else if (type === "integer" || type === "number") {
+    editor = el("input", {
+      class: `tsql-input tsql-cell-input tsql-cell-input--${type}`,
+      attrs: {
+        type: "number",
+        step: type === "integer" ? "1" : "any",
+        inputmode: type === "integer" ? "numeric" : "decimal",
+      },
+    });
+    editor.value = original == null ? "" : String(original);
+    resolveValue = () => {
+      if (editor.value === "") return null;
+      const n = Number(editor.value);
+      if (Number.isNaN(n)) return editor.value; // let server reject
+      // Integer columns: keep precision by sending back as integer when it fits.
+      if (type === "integer" && Number.isFinite(n) && Math.abs(n) <= Number.MAX_SAFE_INTEGER) {
+        return Math.trunc(n);
+      }
+      return n;
+    };
+  } else if (type === "json") {
+    editor = el("textarea", {
+      class: "tsql-input tsql-cell-input tsql-cell-input--json",
+      attrs: { spellcheck: "false", rows: "3" },
+    });
+    editor.value =
+      original == null ? "" : typeof original === "object" ? JSON.stringify(original, null, 2) : String(original);
+    resolveValue = () => {
+      if (editor.value === "") return null;
+      // Try JSON; if invalid, surface the raw text so the server can
+      // round-trip (sidecar binds JSON as text for non-JSON columns
+      // already, so a syntactically invalid edit shows the SQL error).
+      try {
+        return JSON.parse(editor.value);
+      } catch {
+        return editor.value;
+      }
+    };
+  } else {
+    // text / fallback
+    editor = el("input", { class: "tsql-input tsql-cell-input", attrs: { type: "text" } });
+    editor.value =
+      original == null ? "" : typeof original === "object" ? JSON.stringify(original) : String(original);
+    resolveValue = () => {
+      if (editor.value === "") return null;
+      return editor.value;
+    };
+  }
+
+  clearChildren(td);
+  td.appendChild(editor);
+  if (typeof editor.focus === "function") editor.focus();
+  if (typeof editor.select === "function" && editor.tagName !== "SELECT") {
+    try {
+      editor.select();
+    } catch {
+      // ignore (some input types don't support text selection)
+    }
+  }
+
+  const blurCommit = () => {
+    if (committedOnChange) return;
+    committedOnChange = true;
+    commitWith(resolveValue());
+  };
+  editor.addEventListener("blur", blurCommit);
+  editor.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
+      // Allow newlines inside the JSON textarea on Shift+Enter; commit
+      // on plain Enter for every other editor.
+      if (editor.tagName === "TEXTAREA" && event.shiftKey) return;
       event.preventDefault();
-      commit();
+      committedOnChange = true;
+      commitWith(resolveValue());
     } else if (event.key === "Escape") {
-      input.dataset.done = "1";
-      td.replaceChildren(renderCellContent(original));
+      event.preventDefault();
+      committedOnChange = true;
+      cancel();
     }
   });
 }
 
+/** Loose text → JS-value coercion for the legacy Insert dialog. The inline
+ *  cell editor uses dedicated typed widgets and does NOT go through this
+ *  path. Kept text-only because the Insert dialog still renders a flat
+ *  `<input type="text">` per column. */
 function parseEditedValue(text, prev) {
   if (text === "") return null;
   if (typeof prev === "number") {
@@ -3099,6 +3394,7 @@ async function restartSidecarFlow() {
   sidecar = null;
   state.sessions = {};
   state.active = null;
+  setTabState("disconnected");
   rerender();
   ensureSidecar()
     .then(() => safeToast("Sidecar restarted", "success"))
@@ -3163,7 +3459,7 @@ const STYLES_CSS = `
 /* Sticky head holds the "Schema" subheader + search input. Pinning the
    wrapper (not the children individually) keeps the input's horizontal
    margin gutters opaque so rows scrolling under it don't show through. */
-.tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 6px; }
+.tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .tsql-tree-head .tsql-subheader { border-bottom: 0; }
 .tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); background: var(--card, var(--background)); gap: 8px; }
 .tsql-tree-search { display: block; box-sizing: border-box; width: 100%; margin: 0; padding: 4px 26px 4px 10px; border: 1px solid transparent; border-radius: var(--radius, 0); background: color-mix(in srgb, var(--input) 50%, transparent); color: var(--foreground); font-size: 11px; font-family: inherit; height: 28px; line-height: 1; outline: none; transition: border-color 0.12s ease, background-color 0.12s ease; }
@@ -3212,7 +3508,7 @@ const STYLES_CSS = `
 .tsql-tree-empty { padding: 4px 16px; color: var(--muted-foreground); font-size: 11px; }
 
 .tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; }
+.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
 /* Buttons match the host's <Button variant="ghost"> chrome: 1 px
    transparent border at rest so the hover bg paints as a clean box
    without an outline ring, only --ring shows on focus-visible.
@@ -3262,11 +3558,21 @@ const STYLES_CSS = `
 .tsql-result-meta { padding: 6px 12px; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 /* Heidi-style result-grid toolbar: row-count + duration on the left,
    client-side search input + page navigation on the right. Wraps under
-   the search on narrow widths so the controls never overlap. */
-.tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 6px 12px 6px 12px; }
-.tsql-grid-meta-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.tsql-grid-meta-right { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+   the search on narrow widths so the controls never overlap.
+   `.tsql-meta--sticky` pins the bar to the top of the scrolling result
+   body so the user keeps the controls in view while scrolling. The
+   1 px bottom divider matches the project's standard hairline. */
+.tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 6px 12px 6px 12px; row-gap: 6px; }
+.tsql-grid-meta-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.tsql-grid-meta-right { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .tsql-grid-meta .tsql-input.tsql-grid-search { width: 200px; padding: 4px 10px; }
+.tsql-meta--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--card, var(--background));
+  border-bottom: 1px solid var(--border);
+}
 .tsql-grid-pager { display: inline-flex; align-items: center; gap: 4px; }
 .tsql-pager-info { color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-size: 11px; min-width: 80px; text-align: center; }
 .tsql-btn.tsql-pager-btn { padding: 0 6px; min-width: 24px; height: 24px; font-size: 13px; line-height: 1; }
@@ -3281,8 +3587,10 @@ const STYLES_CSS = `
 .tsql-sql-preview { padding: 2px 12px 6px 12px; color: var(--muted-foreground); font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 /* Divider between the meta/search toolbar and the sticky table header
    so the two sections read as distinct bands instead of bleeding into
-   each other. */
-.tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border-top: 1px solid var(--border); }
+   each other. Border-top is dropped here because `.tsql-meta--sticky`
+   already paints the 1 px hairline on its bottom edge, keeping the
+   divider consistent across both result and table grids. */
+.tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .tsql-grid-slot > .tsql-grid-wrap { flex: 1 1 auto; }
 
 /* Result / table grid — sticky header with subtle shadow, zebra rows,
@@ -3319,7 +3627,29 @@ const STYLES_CSS = `
 .tsql-cell-bool { color: var(--foreground); font-weight: 600; }
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
 .tsql-grid-actions-col { width: 30px; }
-.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; }
+.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; box-sizing: border-box; }
+/* Typed cell editors: same chrome as the text input above, but with a
+   couple of variant-specific tweaks. They all sit flush in the table cell
+   so the row height stays consistent with the read-only grid. */
+.tsql-cell-input.tsql-cell-input--bool,
+.tsql-cell-input.tsql-cell-input--enum {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--foreground) 50%), linear-gradient(135deg, var(--foreground) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 22px;
+  cursor: pointer;
+}
+.tsql-cell-input.tsql-cell-input--date,
+.tsql-cell-input.tsql-cell-input--time,
+.tsql-cell-input.tsql-cell-input--datetime { font-variant-numeric: tabular-nums; }
+.tsql-cell-input.tsql-cell-input--number { text-align: right; font-variant-numeric: tabular-nums; }
+.tsql-cell-input.tsql-cell-input--json { width: 100%; min-height: 60px; max-height: 180px; padding: 4px 8px; resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); white-space: pre; }
+/* Calendar / clock indicator inherits the host's foreground colour so it
+   doesn't render as a bright OS-default white square on dark themes. */
+.tsql-cell-input::-webkit-calendar-picker-indicator { filter: invert(0.55); cursor: pointer; }
 .tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
 
 .tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }

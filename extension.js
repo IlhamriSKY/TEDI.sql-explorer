@@ -3564,14 +3564,31 @@ const STYLES_CSS = `
 .tsql-tree-row { width: 100%; display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 4px 8px 4px calc(8px + var(--tsql-depth, 0) * 14px); background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font-size: 12px; border-radius: var(--radius, 0); outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-tree-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); }
 .tsql-tree-row:focus-visible { background: var(--accent, rgba(127,127,127,0.12)); }
-/* Active row (selected database / open table). A cohesive highlighted
-   block: accent fill + accent-foreground text, a flush 2 px primary bar
-   on the left (inset box-shadow so it merges with the fill instead of
-   reading as a detached line), and square corners so the bar runs the
-   full row height. Icon / caret / row-count all shift to the active text
-   colour so the whole row reads as selected, not just a left stripe. */
-.tsql-tree-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); box-shadow: inset 2px 0 0 0 var(--primary, #3b82f6); border-radius: 0; }
-.tsql-tree-row.is-active .tsql-tree-icon, .tsql-tree-row.is-active .tsql-caret, .tsql-tree-row.is-active .tsql-tree-meta { color: var(--accent-foreground, var(--foreground)); }
+/* Open table / view: the one clear selection. A soft primary tint + a
+   flush 2 px primary left bar (inset box-shadow so it merges with the
+   tint instead of reading as a detached line) + bold label. Calm, not a
+   saturated block. Scoped to table/view rows so it never stacks with the
+   database highlight into one confusing two-row blob. */
+.tsql-node-table > .tsql-tree-row.is-active,
+.tsql-node-view > .tsql-tree-row.is-active {
+  background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent);
+  color: var(--foreground);
+  box-shadow: inset 2px 0 0 0 var(--primary, #3b82f6);
+  border-radius: 0;
+}
+.tsql-node-table > .tsql-tree-row.is-active .tsql-tree-label,
+.tsql-node-view > .tsql-tree-row.is-active .tsql-tree-label { font-weight: 600; }
+.tsql-node-table > .tsql-tree-row.is-active .tsql-tree-icon,
+.tsql-node-view > .tsql-tree-row.is-active .tsql-tree-icon,
+.tsql-node-table > .tsql-tree-row.is-active .tsql-tree-meta,
+.tsql-node-view > .tsql-tree-row.is-active .tsql-tree-meta { color: var(--foreground); }
+/* Active (expanded / current) database stays quiet so it doesn't compete
+   with the open table: no fill or bar, just a bold label and a
+   primary-tinted caret + icon as a subtle "current context" cue. */
+.tsql-node-db > .tsql-tree-row.is-active { color: var(--foreground); }
+.tsql-node-db > .tsql-tree-row.is-active .tsql-tree-label { font-weight: 600; }
+.tsql-node-db > .tsql-tree-row.is-active .tsql-caret,
+.tsql-node-db > .tsql-tree-row.is-active .tsql-tree-icon { color: var(--primary, #3b82f6); }
 /* SQL-driven navigation cue. When the user types a table name we know,
    the matching row pulses in --ring for ~1.2 s, then settles into a
    subtle border-left accent so the user can still see "this is what
@@ -3579,8 +3596,8 @@ const STYLES_CSS = `
    uses box-shadow inset so it doesn't shift layout. */
 .tsql-tree-row.is-target { box-shadow: inset 2px 0 0 0 var(--ring, var(--primary, #3b82f6)); border-radius: 0; animation: tsql-target-pulse 1.2s ease-out 1; }
 @keyframes tsql-target-pulse {
-  0%   { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 35%, transparent); }
-  60%  { background: color-mix(in srgb, var(--ring, var(--primary, #3b82f6)) 18%, transparent); }
+  0%   { background: color-mix(in srgb, var(--primary, #3b82f6) 22%, transparent); }
+  60%  { background: color-mix(in srgb, var(--primary, #3b82f6) 12%, transparent); }
   100% { background: transparent; }
 }
 .tsql-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted-foreground); transition: transform 0.12s ease; }

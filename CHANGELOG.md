@@ -2,6 +2,18 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.2.29 (2026-05-28)
+
+- Style: tone down the tree active highlight introduced in 0.2.28, which
+  made the current database and its open table two loud adjacent blue
+  blocks that merged into one confusing region. Now only the open
+  table/view carries the highlight (a soft primary tint + flush left bar +
+  bold label), while the active database stays subtle (bold label +
+  primary-tinted caret / icon, no fill or bar). Verified with a rendered
+  side-by-side preview.
+- Style: soften the SQL-driven navigation pulse so it no longer flashes a
+  saturated blue across the row.
+
 ## 0.2.28 (2026-05-28)
 
 - Style: active schema-tree row (selected database / open table) is now a

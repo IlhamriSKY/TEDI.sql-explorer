@@ -15,7 +15,6 @@ path = "src/main.rs"
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "query"] }
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-tower = { version = "0.5", default-features = false }
 tower-http = { version = "0.6", features = ["cors"] }
 hyper = { version = "1", features = ["server", "http1"] }
 

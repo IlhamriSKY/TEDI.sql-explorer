@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
+use crate::schema::{escape_mysql_ident, escape_pg_ident};
 use crate::state::ConnectionConfig;
 use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row};
 
@@ -241,6 +242,106 @@ fn strip_leading_comments(sql: &str) -> &str {
     std::str::from_utf8(&bytes[i.min(bytes.len())..]).unwrap_or("")
 }
 
+/// True if every statement in `sql` is safe to run on a read-only connection
+/// (see `is_read_only_safe`). Used by the export path, which would otherwise
+/// run caller-supplied SQL with no statement-kind gate. Empty input is
+/// rejected so a blank export errors cleanly rather than silently.
+pub fn all_statements_read_only(sql: &str) -> bool {
+    let statements = split_statements(sql);
+    !statements.is_empty()
+        && statements
+            .iter()
+            .all(|stmt| is_read_only_safe(stmt, classify(stmt)))
+}
+
+/// Conservative write-gate for read-only connections.
+///
+/// `classify()` keys only on a statement's first keyword, so on its own it
+/// would wave through writes disguised as reads: a data-modifying CTE
+/// (`WITH x AS (DELETE ... RETURNING *) SELECT ...`), `EXPLAIN ANALYZE
+/// <write>` (which executes the inner statement on PostgreSQL), and anything
+/// that lands in `Unknown` (`COPY ... FROM`, `LOAD DATA`, `REFRESH
+/// MATERIALIZED VIEW`, ...). A statement is therefore allowed on a read-only
+/// connection only when it is a recognised read that is neither a writing CTE
+/// nor an `EXPLAIN ANALYZE`. `StatementKind` is left untouched, so the
+/// rows-vs-exec execution path is unchanged on writable connections.
+///
+/// Still a heuristic: a `SELECT` of a volatile / writing function can mutate.
+/// For a hard guarantee, connect with a database-level read-only role.
+fn is_read_only_safe(sql: &str, kind: StatementKind) -> bool {
+    if kind != StatementKind::Read {
+        return false;
+    }
+    let head = strip_quotes_and_comments(sql)
+        .trim_start()
+        .to_ascii_uppercase();
+    if let Some(rest) = head.strip_prefix("WITH") {
+        return !word_present(rest, &["INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE"]);
+    }
+    if let Some(rest) = head.strip_prefix("EXPLAIN") {
+        return !word_present(rest, &["ANALYZE", "ANALYSE"]);
+    }
+    true
+}
+
+/// Blank out `--` / `/* */` comments and single / double / backtick-quoted
+/// spans so a keyword scan only ever sees bare SQL (a `DELETE` inside a
+/// string literal or a `"delete"` identifier must not trip the gate).
+fn strip_quotes_and_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '-' if chars.peek() == Some(&'-') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            '\'' | '"' | '`' => {
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        chars.next();
+                        continue;
+                    }
+                    if c == ch {
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// True if `haystack` contains any `needle` as a whole word (ASCII
+/// alphanumeric / underscore boundaries). Both are assumed uppercased.
+fn word_present(haystack: &str, needles: &[&str]) -> bool {
+    let bytes = haystack.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    needles.iter().any(|needle| {
+        haystack.match_indices(needle).any(|(start, _)| {
+            let end = start + needle.len();
+            (start == 0 || !is_word(bytes[start - 1]))
+                && (end == bytes.len() || !is_word(bytes[end]))
+        })
+    })
+}
+
 pub async fn execute(
     backend: &Backend,
     config: &ConnectionConfig,
@@ -269,13 +370,13 @@ pub async fn execute(
     let pinned: Option<PinnedConn> = match (backend, database) {
         (Backend::Mysql(pool), Some(db)) if !db.is_empty() => {
             let mut conn = pool.acquire().await?;
-            let use_sql = format!("USE `{}`", db.replace('`', "``"));
+            let use_sql = format!("USE {}", escape_mysql_ident(db)?);
             (&mut *conn).execute(use_sql.as_str()).await?;
             Some(PinnedConn::Mysql(conn))
         }
         (Backend::Postgres(pool), Some(db)) if !db.is_empty() => {
             let mut conn = pool.acquire().await?;
-            let set_sql = format!("SET search_path TO \"{}\"", db.replace('"', "\"\""));
+            let set_sql = format!("SET search_path TO {}", escape_pg_ident(db)?);
             (&mut *conn).execute(set_sql.as_str()).await?;
             Some(PinnedConn::Postgres(conn))
         }
@@ -294,9 +395,7 @@ pub async fn execute(
             break;
         }
         let kind = classify(&stmt);
-        if !config.allow_writes
-            && matches!(kind, StatementKind::Write | StatementKind::Ddl)
-        {
+        if !config.allow_writes && !is_read_only_safe(&stmt, kind) {
             out.push(StatementResult::Error {
                 sql: stmt,
                 error: "connection is read-only. Enable writes in the connection settings".into(),
@@ -370,7 +469,7 @@ async fn run_one(
     kind: StatementKind,
     row_limit: u64,
 ) -> AppResult<StatementResult> {
-    use sqlx::{Column as _, Executor as _, Statement as _, TypeInfo as _};
+    use sqlx::{Executor as _, Statement as _};
     let is_read = matches!(kind, StatementKind::Read | StatementKind::Unknown);
     match (backend, pinned) {
         (Backend::Mysql(_), Some(PinnedConn::Mysql(conn))) => {
@@ -494,83 +593,41 @@ async fn run_one(
     }
 }
 
-fn collect_mysql_rows(
-    rows: Vec<sqlx::mysql::MySqlRow>,
-    header_override: Option<Vec<ColumnHeader>>,
-    limit: u64,
-) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = header_override
-        .or_else(|| {
-            rows.first().map(|r| {
-                r.columns()
-                    .iter()
-                    .map(|c| ColumnHeader {
-                        name: c.name().to_string(),
-                        data_type: c.type_info().name().to_string(),
+// The three collectors differ only in the row type and per-row decode fn;
+// everything else (header fallback, truncation check, take(limit).map(decode))
+// is identical. A macro keeps them in lockstep, mirroring `impl_bind!` in
+// edit.rs. `Column` / `Row` / `TypeInfo` are imported at the top of the file.
+macro_rules! impl_collect {
+    ($name:ident, $row:ty, $decode:path) => {
+        fn $name(
+            rows: Vec<$row>,
+            header_override: Option<Vec<ColumnHeader>>,
+            limit: u64,
+        ) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
+            let columns = header_override
+                .or_else(|| {
+                    rows.first().map(|r| {
+                        r.columns()
+                            .iter()
+                            .map(|c| ColumnHeader {
+                                name: c.name().to_string(),
+                                data_type: c.type_info().name().to_string(),
+                            })
+                            .collect()
                     })
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
-    let truncated = rows.len() as u64 > limit;
-    let decoded: Vec<Vec<Value>> = rows
-        .into_iter()
-        .take(limit as usize)
-        .map(|r| decode_mysql_row(&r))
-        .collect();
-    (columns, decoded, truncated)
+                })
+                .unwrap_or_default();
+            let truncated = rows.len() as u64 > limit;
+            let decoded: Vec<Vec<Value>> = rows
+                .into_iter()
+                .take(limit as usize)
+                .map(|r| $decode(&r))
+                .collect();
+            (columns, decoded, truncated)
+        }
+    };
 }
 
-fn collect_pg_rows(
-    rows: Vec<sqlx::postgres::PgRow>,
-    header_override: Option<Vec<ColumnHeader>>,
-    limit: u64,
-) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = header_override
-        .or_else(|| {
-            rows.first().map(|r| {
-                r.columns()
-                    .iter()
-                    .map(|c| ColumnHeader {
-                        name: c.name().to_string(),
-                        data_type: c.type_info().name().to_string(),
-                    })
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
-    let truncated = rows.len() as u64 > limit;
-    let decoded: Vec<Vec<Value>> = rows
-        .into_iter()
-        .take(limit as usize)
-        .map(|r| decode_pg_row(&r))
-        .collect();
-    (columns, decoded, truncated)
-}
-
-fn collect_sqlite_rows(
-    rows: Vec<sqlx::sqlite::SqliteRow>,
-    header_override: Option<Vec<ColumnHeader>>,
-    limit: u64,
-) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-    let columns = header_override
-        .or_else(|| {
-            rows.first().map(|r| {
-                r.columns()
-                    .iter()
-                    .map(|c| ColumnHeader {
-                        name: c.name().to_string(),
-                        data_type: c.type_info().name().to_string(),
-                    })
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
-    let truncated = rows.len() as u64 > limit;
-    let decoded: Vec<Vec<Value>> = rows
-        .into_iter()
-        .take(limit as usize)
-        .map(|r| decode_sqlite_row(&r))
-        .collect();
-    (columns, decoded, truncated)
-}
+impl_collect!(collect_mysql_rows, sqlx::mysql::MySqlRow, decode_mysql_row);
+impl_collect!(collect_pg_rows, sqlx::postgres::PgRow, decode_pg_row);
+impl_collect!(collect_sqlite_rows, sqlx::sqlite::SqliteRow, decode_sqlite_row);

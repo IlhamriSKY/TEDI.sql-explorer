@@ -4,6 +4,7 @@
 //! frontend can hand the body to the standard TEDI save dialog. Stream-mode
 //! exports for huge result sets are a follow-up.
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::{Column, Row};
@@ -11,7 +12,17 @@ use sqlx::{Column, Row};
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
 use crate::schema::{escape_mysql_ident, escape_pg_ident};
+use crate::state::ConnectionConfig;
 use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row};
+
+/// Engine flavour for the SQL export format: drives identifier quoting and
+/// the binary-literal syntax, which differ across MySQL / PostgreSQL / SQLite.
+#[derive(Clone, Copy)]
+enum SqlDialect {
+    Mysql,
+    Postgres,
+    Sqlite,
+}
 
 #[derive(Deserialize)]
 pub struct ExportRequest {
@@ -51,12 +62,33 @@ pub struct ExportResponse {
     pub rows: u64,
 }
 
-pub async fn run_export(backend: &Backend, req: &ExportRequest) -> AppResult<ExportResponse> {
+pub async fn run_export(
+    backend: &Backend,
+    config: &ConnectionConfig,
+    req: &ExportRequest,
+) -> AppResult<ExportResponse> {
+    // Raw-SQL exports run caller-supplied SQL verbatim; gate them on
+    // allow_writes the same way /query does, so a read-only connection
+    // can't be used to mutate data through the export path.
+    if let Some(raw) = &req.sql {
+        if !config.allow_writes && !crate::query::all_statements_read_only(raw) {
+            return Err(AppError::BadRequest(
+                "connection is read-only. Enable writes to export a non-read statement".into(),
+            ));
+        }
+    }
     let sql = build_sql(req)?;
     // `format_output` re-escapes via `quote_ident`, so any table name is
     // safe to pass through. Fall back to `rows` only for raw-SQL exports
     // where the request didn't name a table at all.
     let table_for_sql = req.table.as_deref().unwrap_or("rows");
+    // Identifier quoting + binary-literal syntax for the SQL export format
+    // depend on the engine.
+    let dialect = match backend {
+        Backend::Mysql(_) => SqlDialect::Mysql,
+        Backend::Postgres(_) => SqlDialect::Postgres,
+        Backend::Sqlite(_) => SqlDialect::Sqlite,
+    };
 
     match backend {
         Backend::Mysql(pool) => {
@@ -75,7 +107,7 @@ pub async fn run_export(backend: &Backend, req: &ExportRequest) -> AppResult<Exp
                 .take(req.row_limit as usize)
                 .map(decode_mysql_row)
                 .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql))
+            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
         }
         Backend::Postgres(pool) => {
             let rows = sqlx::query(&sql).fetch_all(pool).await?;
@@ -93,7 +125,7 @@ pub async fn run_export(backend: &Backend, req: &ExportRequest) -> AppResult<Exp
                 .take(req.row_limit as usize)
                 .map(decode_pg_row)
                 .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql))
+            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
         }
         Backend::Sqlite(pool) => {
             let rows = sqlx::query(&sql).fetch_all(pool).await?;
@@ -111,7 +143,7 @@ pub async fn run_export(backend: &Backend, req: &ExportRequest) -> AppResult<Exp
                 .take(req.row_limit as usize)
                 .map(decode_sqlite_row)
                 .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql))
+            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
         }
     }
 }
@@ -150,6 +182,7 @@ fn format_output(
     columns: &[String],
     rows: &[Vec<Value>],
     table: &str,
+    dialect: SqlDialect,
 ) -> ExportResponse {
     match fmt {
         ExportFormat::Csv => {
@@ -199,20 +232,20 @@ fn format_output(
             let mut s = String::new();
             for row in rows {
                 s.push_str("INSERT INTO ");
-                s.push_str(&quote_ident(table));
+                s.push_str(&quote_ident(dialect, table));
                 s.push_str(" (");
                 for (i, col) in columns.iter().enumerate() {
                     if i > 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&quote_ident(col));
+                    s.push_str(&quote_ident(dialect, col));
                 }
                 s.push_str(") VALUES (");
                 for (i, cell) in row.iter().enumerate() {
                     if i > 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&sql_literal(cell));
+                    s.push_str(&sql_literal(dialect, cell));
                 }
                 s.push_str(");\n");
             }
@@ -260,11 +293,28 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-fn quote_ident(s: &str) -> String {
-    format!("`{}`", s.replace('`', "``"))
+fn quote_ident(dialect: SqlDialect, s: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("`{}`", s.replace('`', "``")),
+        // PostgreSQL and SQLite both use double-quoted identifiers.
+        SqlDialect::Postgres | SqlDialect::Sqlite => format!("\"{}\"", s.replace('"', "\"\"")),
+    }
 }
 
-fn sql_literal(v: &Value) -> String {
+/// Render a binary blob as an engine-appropriate SQL literal so the exported
+/// INSERTs re-run against the source database.
+fn binary_literal(dialect: SqlDialect, b64: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("FROM_BASE64('{b64}')"),
+        SqlDialect::Postgres => format!("decode('{b64}', 'base64')"),
+        SqlDialect::Sqlite => match base64::engine::general_purpose::STANDARD.decode(b64) {
+            Ok(bytes) => format!("X'{}'", hex::encode(bytes)),
+            Err(_) => format!("'{b64}'"),
+        },
+    }
+}
+
+fn sql_literal(dialect: SqlDialect, v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => if *b { "TRUE".into() } else { "FALSE".into() },
@@ -274,7 +324,7 @@ fn sql_literal(v: &Value) -> String {
             if let Some(obj) = other.as_object() {
                 if obj.get("__type").and_then(|t| t.as_str()) == Some("bytes") {
                     if let Some(b64) = obj.get("b64").and_then(|t| t.as_str()) {
-                        return format!("FROM_BASE64('{b64}')");
+                        return binary_literal(dialect, b64);
                     }
                 }
             }

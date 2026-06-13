@@ -4,7 +4,7 @@ name: Release
 #   1. spins up windows / macos / linux runners (and arm64 cross-target)
 #   2. builds the `tedi-sql-helper` sidecar per (target_os, target_arch)
 #   3. collects every binary into `sidecar/<platform>-<arch>/` next to
-#      manifest.json + extension.js + logo.svg
+#      manifest.json + extension.js + logo.png
 #   4. zips the whole tree, uploads to the GitHub release that TEDI's
 #      installer reads from `releases/latest`.
 #

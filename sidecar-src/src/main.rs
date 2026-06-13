@@ -60,7 +60,7 @@ use crate::state::{AppState, Connection, ConnectionConfig};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if matches!(args.iter().next().map(String::as_str), Some("--version" | "-V")) {
+    if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
         println!("tedi-sql-helper {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -463,7 +463,7 @@ async fn handle_export(
     Json(req): Json<ExportRequest>,
 ) -> AppResult<Json<Value>> {
     let conn = require_connection(&state, &req.conn).await?;
-    let resp = run_export(&conn.backend, &req).await?;
+    let resp = run_export(&conn.backend, &conn.config, &req).await?;
     Ok(Json(json!({ "ok": true, "export": resp })))
 }
 

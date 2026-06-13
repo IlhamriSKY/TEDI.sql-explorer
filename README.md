@@ -11,8 +11,8 @@ terminals.
 </p>
 
 > [!NOTE]
-> Requires TEDI >= 0.2.26 for the `ctx.headerBar`,
-> `ctx.tabs.openExtensionTab`, `ctx.ui.codeEditor`, and
+> Requires TEDI >= 0.3.9 (see `engines.tedi` in manifest.json) for the
+> `ctx.headerBar`, `ctx.tabs.openExtensionTab`, `ctx.ui.codeEditor`, and
 > `ctx.app.setSidebarVisible` host APIs the workbench uses.
 
 ---

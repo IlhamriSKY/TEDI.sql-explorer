@@ -9,7 +9,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sqlx::{Column, Executor as _, Row, Statement as _, TypeInfo};
+use sqlx::{Column, Executor as _, Row, Statement as _};
 
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
@@ -60,7 +60,6 @@ fn default_page_size() -> u64 {
 #[derive(Serialize)]
 pub struct TableRowsResponse {
     pub columns: Vec<String>,
-    pub column_types: Vec<String>,
     pub rows: Vec<Vec<Value>>,
     pub total: Option<i64>,
     pub page: u64,
@@ -108,14 +107,6 @@ fn qualify_pg(schema: &str, table: &str) -> AppResult<String> {
 
 fn qualify_sqlite(table: &str) -> AppResult<String> {
     escape_pg_ident(table)
-}
-
-fn quote_mysql_ident(name: &str) -> AppResult<String> {
-    escape_mysql_ident(name)
-}
-
-fn quote_pg_ident(name: &str) -> AppResult<String> {
-    escape_pg_ident(name)
 }
 
 fn order_dir_ok(s: &str) -> bool {
@@ -272,14 +263,14 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
             // surface in the search.
             let search = build_search_clause(
                 req,
-                quote_mysql_ident,
+                escape_mysql_ident,
                 |c| format!("CAST({c} AS CHAR) LIKE ? ESCAPE '\\\\'"),
             )?;
             if let Some((clause, _)) = &search {
                 sql.push_str(&format!(" WHERE {clause}"));
             }
             if let Some(col) = &req.order_by {
-                let col = quote_mysql_ident(col)?;
+                let col = escape_mysql_ident(col)?;
                 sql.push_str(&format!(" ORDER BY {col} {}", req.order_dir.to_uppercase()));
             }
             sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
@@ -292,31 +283,24 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
             // Preflight prepare so the column list survives 0-row results
             // (empty table, filter that matches nothing). sqlx caches the
             // prepared statement so the fetch below reuses it.
-            let prep_cols: Option<(Vec<String>, Vec<String>)> =
-                pool.prepare(&sql).await.ok().map(|s| {
-                    s.columns()
-                        .iter()
-                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
-                        .unzip()
-                });
+            let prep_cols: Option<Vec<String>> = pool.prepare(&sql).await.ok().map(|s| {
+                s.columns().iter().map(|c| c.name().to_string()).collect()
+            });
             let rows = q.fetch_all(pool).await?;
-            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+            let columns: Vec<String> = if rows.is_empty() {
                 prep_cols.unwrap_or_default()
             } else {
-                let r = rows.first().unwrap();
-                (
-                    r.columns().iter().map(|c| c.name().to_string()).collect(),
-                    r.columns()
-                        .iter()
-                        .map(|c| c.type_info().name().to_string())
-                        .collect(),
-                )
+                rows.first()
+                    .unwrap()
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect()
             };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_mysql_row).collect();
             let total = count_mysql(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {
                 columns,
-                column_types,
                 rows: decoded,
                 total,
                 page: req.page,
@@ -331,7 +315,7 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
             let mut pg_idx: usize = 1;
             let search = build_search_clause(
                 req,
-                quote_pg_ident,
+                escape_pg_ident,
                 |c| {
                     let s = format!("CAST({c} AS TEXT) ILIKE ${pg_idx}");
                     pg_idx += 1;
@@ -343,7 +327,7 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                 sql.push_str(&format!(" WHERE {clause}"));
             }
             if let Some(col) = &req.order_by {
-                let col = quote_pg_ident(col)?;
+                let col = escape_pg_ident(col)?;
                 sql.push_str(&format!(" ORDER BY {col} {}", req.order_dir.to_uppercase()));
             }
             sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
@@ -353,31 +337,24 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                     q = q.bind(b.as_str());
                 }
             }
-            let prep_cols: Option<(Vec<String>, Vec<String>)> =
-                pool.prepare(&sql).await.ok().map(|s| {
-                    s.columns()
-                        .iter()
-                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
-                        .unzip()
-                });
+            let prep_cols: Option<Vec<String>> = pool.prepare(&sql).await.ok().map(|s| {
+                s.columns().iter().map(|c| c.name().to_string()).collect()
+            });
             let rows = q.fetch_all(pool).await?;
-            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+            let columns: Vec<String> = if rows.is_empty() {
                 prep_cols.unwrap_or_default()
             } else {
-                let r = rows.first().unwrap();
-                (
-                    r.columns().iter().map(|c| c.name().to_string()).collect(),
-                    r.columns()
-                        .iter()
-                        .map(|c| c.type_info().name().to_string())
-                        .collect(),
-                )
+                rows.first()
+                    .unwrap()
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect()
             };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_pg_row).collect();
             let total = count_pg(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {
                 columns,
-                column_types,
                 rows: decoded,
                 total,
                 page: req.page,
@@ -391,7 +368,7 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
             // TEXT so blob / numeric columns also participate.
             let search = build_search_clause(
                 req,
-                quote_pg_ident,
+                escape_pg_ident,
                 |c| format!("LOWER(CAST({c} AS TEXT)) LIKE LOWER(?) ESCAPE '\\'"),
             )?;
             let mut sql = format!("SELECT * FROM {table}");
@@ -399,7 +376,7 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                 sql.push_str(&format!(" WHERE {clause}"));
             }
             if let Some(col) = &req.order_by {
-                let col = quote_pg_ident(col)?;
+                let col = escape_pg_ident(col)?;
                 sql.push_str(&format!(" ORDER BY {col} {}", req.order_dir.to_uppercase()));
             }
             sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
@@ -409,31 +386,24 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
                     q = q.bind(b.as_str());
                 }
             }
-            let prep_cols: Option<(Vec<String>, Vec<String>)> =
-                pool.prepare(&sql).await.ok().map(|s| {
-                    s.columns()
-                        .iter()
-                        .map(|c| (c.name().to_string(), c.type_info().name().to_string()))
-                        .unzip()
-                });
+            let prep_cols: Option<Vec<String>> = pool.prepare(&sql).await.ok().map(|s| {
+                s.columns().iter().map(|c| c.name().to_string()).collect()
+            });
             let rows = q.fetch_all(pool).await?;
-            let (columns, column_types): (Vec<String>, Vec<String>) = if rows.is_empty() {
+            let columns: Vec<String> = if rows.is_empty() {
                 prep_cols.unwrap_or_default()
             } else {
-                let r = rows.first().unwrap();
-                (
-                    r.columns().iter().map(|c| c.name().to_string()).collect(),
-                    r.columns()
-                        .iter()
-                        .map(|c| c.type_info().name().to_string())
-                        .collect(),
-                )
+                rows.first()
+                    .unwrap()
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect()
             };
             let decoded: Vec<Vec<Value>> = rows.iter().map(decode_sqlite_row).collect();
             let total = count_sqlite(pool, &table, search.as_ref()).await.ok();
             Ok(TableRowsResponse {
                 columns,
-                column_types,
                 rows: decoded,
                 total,
                 page: req.page,
@@ -443,62 +413,35 @@ pub async fn list_rows(backend: &Backend, req: &TableRowsRequest) -> AppResult<T
     }
 }
 
-async fn count_mysql(
-    pool: &sqlx::MySqlPool,
-    table: &str,
-    search: Option<&(String, Vec<String>)>,
-) -> AppResult<i64> {
-    let mut sql = format!("SELECT COUNT(*) AS n FROM {table}");
-    if let Some((clause, _)) = search {
-        sql.push_str(&format!(" WHERE {clause}"));
-    }
-    let mut q = sqlx::query(&sql);
-    if let Some((_, binds)) = search {
-        for b in binds {
-            q = q.bind(b.as_str());
+// The three count helpers are identical apart from the pool type; the
+// per-backend placeholder dialect is already baked into `clause` by
+// build_search_clause, so a macro is safe.
+macro_rules! impl_count {
+    ($name:ident, $pool:ty) => {
+        async fn $name(
+            pool: &$pool,
+            table: &str,
+            search: Option<&(String, Vec<String>)>,
+        ) -> AppResult<i64> {
+            let mut sql = format!("SELECT COUNT(*) AS n FROM {table}");
+            if let Some((clause, _)) = search {
+                sql.push_str(&format!(" WHERE {clause}"));
+            }
+            let mut q = sqlx::query(&sql);
+            if let Some((_, binds)) = search {
+                for b in binds {
+                    q = q.bind(b.as_str());
+                }
+            }
+            let row = q.fetch_one(pool).await?;
+            Ok(row.try_get::<i64, _>("n").unwrap_or(0))
         }
-    }
-    let row = q.fetch_one(pool).await?;
-    Ok(row.try_get::<i64, _>("n").unwrap_or(0))
+    };
 }
 
-async fn count_pg(
-    pool: &sqlx::PgPool,
-    table: &str,
-    search: Option<&(String, Vec<String>)>,
-) -> AppResult<i64> {
-    let mut sql = format!("SELECT COUNT(*) AS n FROM {table}");
-    if let Some((clause, _)) = search {
-        sql.push_str(&format!(" WHERE {clause}"));
-    }
-    let mut q = sqlx::query(&sql);
-    if let Some((_, binds)) = search {
-        for b in binds {
-            q = q.bind(b.as_str());
-        }
-    }
-    let row = q.fetch_one(pool).await?;
-    Ok(row.try_get::<i64, _>("n").unwrap_or(0))
-}
-
-async fn count_sqlite(
-    pool: &sqlx::SqlitePool,
-    table: &str,
-    search: Option<&(String, Vec<String>)>,
-) -> AppResult<i64> {
-    let mut sql = format!("SELECT COUNT(*) AS n FROM {table}");
-    if let Some((clause, _)) = search {
-        sql.push_str(&format!(" WHERE {clause}"));
-    }
-    let mut q = sqlx::query(&sql);
-    if let Some((_, binds)) = search {
-        for b in binds {
-            q = q.bind(b.as_str());
-        }
-    }
-    let row = q.fetch_one(pool).await?;
-    Ok(row.try_get::<i64, _>("n").unwrap_or(0))
-}
+impl_count!(count_mysql, sqlx::MySqlPool);
+impl_count!(count_pg, sqlx::PgPool);
+impl_count!(count_sqlite, sqlx::SqlitePool);
 
 // --------------------------- /table-update -----------------------------------
 
@@ -514,11 +457,11 @@ pub async fn update_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let table = qualify_mysql(&req.database, &req.table)?;
             let mut set_parts = Vec::new();
             for col in req.values.keys() {
-                set_parts.push(format!("{} = ?", quote_mysql_ident(col)?));
+                set_parts.push(format!("{} = ?", escape_mysql_ident(col)?));
             }
             let mut where_parts = Vec::new();
             for col in req.pk.keys() {
-                where_parts.push(format!("{} = ?", quote_mysql_ident(col)?));
+                where_parts.push(format!("{} = ?", escape_mysql_ident(col)?));
             }
             let sql = format!(
                 "UPDATE {} SET {} WHERE {}",
@@ -543,12 +486,12 @@ pub async fn update_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let mut set_parts = Vec::new();
             let mut idx: usize = 1;
             for col in req.values.keys() {
-                set_parts.push(format!("{} = ${}", quote_pg_ident(col)?, idx));
+                set_parts.push(format!("{} = ${}", escape_pg_ident(col)?, idx));
                 idx += 1;
             }
             let mut where_parts = Vec::new();
             for col in req.pk.keys() {
-                where_parts.push(format!("{} = ${}", quote_pg_ident(col)?, idx));
+                where_parts.push(format!("{} = ${}", escape_pg_ident(col)?, idx));
                 idx += 1;
             }
             let sql = format!(
@@ -573,11 +516,11 @@ pub async fn update_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let table = qualify_sqlite(&req.table)?;
             let mut set_parts = Vec::new();
             for col in req.values.keys() {
-                set_parts.push(format!("{} = ?", quote_pg_ident(col)?));
+                set_parts.push(format!("{} = ?", escape_pg_ident(col)?));
             }
             let mut where_parts = Vec::new();
             for col in req.pk.keys() {
-                where_parts.push(format!("{} = ?", quote_pg_ident(col)?));
+                where_parts.push(format!("{} = ?", escape_pg_ident(col)?));
             }
             let sql = format!(
                 "UPDATE {} SET {} WHERE {}",
@@ -612,7 +555,7 @@ pub async fn insert_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let mut cols = Vec::new();
             let mut placeholders = Vec::new();
             for col in req.values.keys() {
-                cols.push(quote_mysql_ident(col)?);
+                cols.push(escape_mysql_ident(col)?);
                 placeholders.push("?".to_string());
             }
             let sql = format!(
@@ -636,7 +579,7 @@ pub async fn insert_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let mut cols = Vec::new();
             let mut placeholders = Vec::new();
             for (i, col) in req.values.keys().enumerate() {
-                cols.push(quote_pg_ident(col)?);
+                cols.push(escape_pg_ident(col)?);
                 placeholders.push(format!("${}", i + 1));
             }
             let sql = format!(
@@ -669,7 +612,7 @@ pub async fn insert_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let mut cols = Vec::new();
             let mut placeholders = Vec::new();
             for col in req.values.keys() {
-                cols.push(quote_pg_ident(col)?);
+                cols.push(escape_pg_ident(col)?);
                 placeholders.push("?".to_string());
             }
             let sql = format!(
@@ -702,7 +645,7 @@ pub async fn delete_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let table = qualify_mysql(&req.database, &req.table)?;
             let mut where_parts = Vec::new();
             for col in req.pk.keys() {
-                where_parts.push(format!("{} = ?", quote_mysql_ident(col)?));
+                where_parts.push(format!("{} = ?", escape_mysql_ident(col)?));
             }
             let sql = format!("DELETE FROM {} WHERE {}", table, where_parts.join(" AND "));
             let mut q = sqlx::query(&sql);
@@ -718,7 +661,7 @@ pub async fn delete_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let table = qualify_pg(&req.schema, &req.table)?;
             let mut where_parts = Vec::new();
             for (i, col) in req.pk.keys().enumerate() {
-                where_parts.push(format!("{} = ${}", quote_pg_ident(col)?, i + 1));
+                where_parts.push(format!("{} = ${}", escape_pg_ident(col)?, i + 1));
             }
             let sql = format!("DELETE FROM {} WHERE {}", table, where_parts.join(" AND "));
             let mut q = sqlx::query(&sql);
@@ -734,7 +677,7 @@ pub async fn delete_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
             let table = qualify_sqlite(&req.table)?;
             let mut where_parts = Vec::new();
             for col in req.pk.keys() {
-                where_parts.push(format!("{} = ?", quote_pg_ident(col)?));
+                where_parts.push(format!("{} = ?", escape_pg_ident(col)?));
             }
             let sql = format!("DELETE FROM {} WHERE {}", table, where_parts.join(" AND "));
             let mut q = sqlx::query(&sql);

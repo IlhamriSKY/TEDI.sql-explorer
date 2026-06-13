@@ -40,16 +40,6 @@ pub enum Backend {
     Sqlite(SqlitePool),
 }
 
-impl Backend {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Backend::Mysql(_) => "mysql",
-            Backend::Postgres(_) => "postgres",
-            Backend::Sqlite(_) => "sqlite",
-        }
-    }
-}
-
 #[derive(Deserialize)]
 pub struct ConnectRequest {
     pub id: String,
@@ -84,10 +74,13 @@ fn default_row_limit() -> u64 {
 
 pub async fn build_backend(req: &ConnectRequest) -> AppResult<Backend> {
     let connect_timeout = Duration::from_secs(15);
+    // Clamp the caller-supplied pool size to a sane ceiling so a single
+    // /connect can't request an unbounded number of backend connections.
+    let max_pool = req.max_pool.clamp(1, 50);
     match req.kind {
         BackendKind::Mysql => {
             let pool = MySqlPoolOptions::new()
-                .max_connections(req.max_pool)
+                .max_connections(max_pool)
                 .acquire_timeout(connect_timeout)
                 .connect(&req.url)
                 .await
@@ -96,7 +89,7 @@ pub async fn build_backend(req: &ConnectRequest) -> AppResult<Backend> {
         }
         BackendKind::Postgres => {
             let pool = PgPoolOptions::new()
-                .max_connections(req.max_pool)
+                .max_connections(max_pool)
                 .acquire_timeout(connect_timeout)
                 .connect(&req.url)
                 .await
@@ -112,17 +105,14 @@ pub async fn build_backend(req: &ConnectRequest) -> AppResult<Backend> {
             } else {
                 format!("sqlite://{}", req.url)
             };
-            let mut opts = SqliteConnectOptions::from_str(&url)
+            let opts = SqliteConnectOptions::from_str(&url)
                 .map_err(|e| AppError::Database(format!("sqlite url: {e}")))?
                 .create_if_missing(!req.sqlite_read_only)
                 .read_only(req.sqlite_read_only)
                 .journal_mode(SqliteJournalMode::Wal)
                 .synchronous(SqliteSynchronous::Normal);
-            if req.sqlite_read_only {
-                opts = opts.create_if_missing(false);
-            }
             let pool = SqlitePoolOptions::new()
-                .max_connections(req.max_pool)
+                .max_connections(max_pool)
                 .acquire_timeout(connect_timeout)
                 .connect_with(opts)
                 .await

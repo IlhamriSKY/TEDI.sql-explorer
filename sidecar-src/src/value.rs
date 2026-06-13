@@ -35,6 +35,23 @@ fn datetime_iso(s: impl AsRef<str>) -> Value {
     Value::String(s.as_ref().to_string())
 }
 
+/// Decode a MySQL integer that fits in 64 bits. Signed first; fall back to
+/// unsigned because sqlx tags `... UNSIGNED` columns with the UNSIGNED flag,
+/// which makes `i64` incompatible — without the fallback every UNSIGNED
+/// column (including `TINYINT UNSIGNED`, whose type name matches no signed
+/// arm) silently decodes to NULL. The covered types all fit in `i64`, so the
+/// JSON number stays exact. (`BIGINT UNSIGNED` keeps its dedicated string
+/// path so values above 2^53 survive the JS client.)
+fn mysql_uint_safe(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
+    if let Ok(v) = row.try_get::<i64, _>(idx) {
+        return Value::from(v);
+    }
+    if let Ok(v) = row.try_get::<u64, _>(idx) {
+        return Value::from(v);
+    }
+    Value::Null
+}
+
 // ----------------------------- MySQL -----------------------------------------
 
 pub fn decode_mysql_row(row: &sqlx::mysql::MySqlRow) -> Vec<Value> {
@@ -69,11 +86,8 @@ fn decode_mysql_cell(row: &sqlx::mysql::MySqlRow, idx: usize, col: &sqlx::mysql:
                 .map(Value::Bool)
                 .unwrap_or(Value::Null)
         }
-        "SMALLINT" | "SMALLINT UNSIGNED" | "MEDIUMINT" | "MEDIUMINT UNSIGNED" | "INT" | "INT UNSIGNED" | "YEAR" => {
-            row.try_get::<i64, _>(idx)
-                .map(Value::from)
-                .unwrap_or(Value::Null)
-        }
+        "TINYINT UNSIGNED" | "SMALLINT" | "SMALLINT UNSIGNED" | "MEDIUMINT"
+        | "MEDIUMINT UNSIGNED" | "INT" | "INT UNSIGNED" | "YEAR" => mysql_uint_safe(row, idx),
         "BIGINT" => row
             .try_get::<i64, _>(idx)
             .map(Value::from)

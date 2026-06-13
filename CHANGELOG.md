@@ -2,6 +2,50 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.3.0 (2026-06-13)
+
+- Feat: the left panel is now one unified tree — each connection is a root
+  node that expands to its databases → schemas → tables, with a single
+  search box filtering every level. The old connection rail + schema tree
+  are merged into one resizable, collapsible sidebar (drag the splitter or
+  use the header toggle), so the workbench fits a narrow split pane next to
+  a terminal/editor. Sidebar width + collapsed state persist across reopen.
+- Feat: free-form single-table SELECT results are editable in place
+  (double-click a cell) when the result maps 1:1 to a base table with a
+  primary key, reusing the table-browse edit path.
+- Feat: connection-editor numeric fields (query timeout / row cap) use
+  themed up/down steppers; every `title` renders through a styled tooltip
+  layer matching the host popover instead of the OS-native bubble.
+- Security: `/export` no longer bypasses the read-only flag — raw-SQL
+  exports are gated on `allow_writes`, so a read-only connection can no
+  longer run DELETE/DROP through the export path.
+- Security: the `/query` read-only gate now rejects data-modifying CTEs
+  (`WITH … DELETE`), `EXPLAIN ANALYZE <write>`, and unrecognised write
+  statements (COPY FROM, LOAD DATA, REFRESH MATERIALIZED VIEW) that
+  previously slipped past the first-keyword check on read-only connections.
+- Security: connection pool size is clamped (≤ 50), and `USE` /
+  `SET search_path` route through the same identifier escaping as every
+  other inlined identifier.
+- Fix: SQL-format export emits engine-correct identifier quoting + binary
+  literals for PostgreSQL / SQLite (was MySQL-only backticks + FROM_BASE64,
+  producing invalid re-runnable SQL for PG/SQLite).
+- Fix: MySQL `TINYINT UNSIGNED` (and other UNSIGNED integers) no longer
+  decode to NULL.
+- Fix: the primary-key cache is keyed by `db.schema.table`, so two
+  same-named tables in different databases no longer return each other's PK
+  metadata (which could build a wrong WHERE on edit/delete).
+- Fix: destructive-query and sidecar-restart confirmations use the in-app
+  dialog instead of native `confirm()` / `prompt()`, which silently no-op in
+  the macOS/Linux webview.
+- Fix: CodeMirror views are disposed when the tab is closed (no leak); on a
+  CPU arch the release doesn't ship a sidecar for, the error now says
+  "unsupported platform" instead of a misleading "reinstall" hint.
+- Chore: removed dead code (unused error variants/methods/CSS/helpers),
+  collapsed duplicated per-backend row collectors / counters into macros,
+  and dropped the unused `column_types` wire field and `tower` dependency.
+- Docs: README minimum-TEDI version corrected to 0.3.9; release-workflow
+  comment fixed (logo.png).
+
 ## 0.2.30 (2026-05-28)
 
 - Feat: query mode now gets the same tree indication as browsing. When a

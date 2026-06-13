@@ -19,7 +19,6 @@
 // pollution; on `deactivate` the panel renderer returns its cleanup
 // callback and the host clears the slot.
 
-const EXT_ID = "tedi.sql-explorer";
 const PANEL_ID = "sql-explorer";
 const CMD_TOGGLE = "tedi.sql-explorer.toggle";
 const CMD_RUN = "tedi.sql-explorer.runQuery";
@@ -33,9 +32,13 @@ const READY_POLL_MS = 80;
 // Sidecar binary directory layout; mirrors tedi.screenshot.
 function platformDir(os) {
   const arch = os?.arch || "x86_64";
-  if (os?.platform === "windows") return arch === "aarch64" ? "windows-aarch64" : "windows-x86_64";
+  // Only arches the release CI actually builds resolve to a dir; anything
+  // else returns null so bootSidecar reports a clean "unsupported platform"
+  // error instead of pointing at a binary the package never shipped. macOS
+  // ships both arches; Windows and Linux ship x86_64 only.
+  if (os?.platform === "windows") return arch === "aarch64" ? null : "windows-x86_64";
   if (os?.platform === "macos") return arch === "aarch64" ? "macos-aarch64" : "macos-x86_64";
-  if (os?.platform === "linux") return arch === "aarch64" ? "linux-aarch64" : "linux-x86_64";
+  if (os?.platform === "linux") return arch === "aarch64" ? null : "linux-x86_64";
   return null;
 }
 
@@ -54,7 +57,13 @@ let ctx = null;
 let sidecar = null; // { handle, port, token, baseUrl }
 let bootInFlight = null;
 let panelRoot = null;
-let panelDispose = null;
+// Unified left-sidebar layout state. Persisted to settings so width /
+// collapsed survive a tab reopen; `expandedConns` + `sidebarSearch` only
+// need to survive the frequent in-panel rerenders.
+let sidebarWidthPx = 240;
+let sidebarCollapsed = false;
+let sidebarSearch = "";
+const expandedConns = new Set();
 const state = {
   connections: [], // [{ id, name, kind, host, port, database, user, allow_writes, sslMode, sqliteReadOnly, url? }]
   active: null, // active connection id
@@ -174,6 +183,11 @@ export async function activate(context) {
     panelRoot = container;
     container.replaceChildren();
     container.classList.add("tsql-host");
+    // Delegated styled-tooltip controller for the whole panel subtree
+    // (survives the frequent clearChildren-based rerenders since it binds
+    // to the persistent container, not its children).
+    tooltipLayer?.dispose();
+    tooltipLayer = initTooltipLayer(container);
     renderPanel(container);
     // Boot the sidecar lazily on first panel mount. If it dies the user can
     // restart it from the menu without re-opening the extension.
@@ -182,6 +196,20 @@ export async function activate(context) {
       safeToast(`SQL helper failed to start: ${err?.message ?? err}`, "error");
     });
     return () => {
+      // Closing the tab tears the renderer down without deactivating the
+      // extension; dispose the live CodeMirror views here too (mirrors
+      // deactivate()) so they don't linger in the host handle registry.
+      if (state.editorHandle?.dispose) {
+        try {
+          state.editorHandle.dispose();
+        } catch {
+          // ignore
+        }
+        state.editorHandle = null;
+      }
+      disposePreviewEditors();
+      tooltipLayer?.dispose();
+      tooltipLayer = null;
       panelRoot = null;
     };
   });
@@ -200,6 +228,8 @@ export async function deactivate() {
       state.editorHandle = null;
     }
     disposePreviewEditors();
+    tooltipLayer?.dispose();
+    tooltipLayer = null;
     if (sidecar?.baseUrl) {
       await fetchJson("/shutdown", { method: "POST", body: {} }).catch(() => {});
     }
@@ -209,7 +239,6 @@ export async function deactivate() {
   } finally {
     sidecar = null;
     panelRoot = null;
-    panelDispose = null;
     ctx = null;
   }
 }
@@ -365,6 +394,11 @@ async function loadSavedConnections() {
   try {
     const saved = await ctx.settings.get("connections");
     if (Array.isArray(saved)) state.connections = saved;
+    const sb = await ctx.settings.get("sidebar");
+    if (sb && typeof sb === "object") {
+      if (typeof sb.width === "number" && sb.width > 0) sidebarWidthPx = sb.width;
+      if (typeof sb.collapsed === "boolean") sidebarCollapsed = sb.collapsed;
+    }
   } catch (err) {
     ctx?.logger?.warn?.("load connections failed", err);
   }
@@ -407,7 +441,13 @@ function el(tag, opts = {}, ...children) {
   if (opts.html != null) node.innerHTML = opts.html; // only for trusted static strings
   if (opts.attrs) {
     for (const [k, v] of Object.entries(opts.attrs)) {
-      if (v != null && v !== false) node.setAttribute(k, v === true ? "" : String(v));
+      if (v == null || v === false) continue;
+      // Route every `title` through the custom tooltip layer (data-tooltip)
+      // instead of the OS-native browser bubble, so all SQL Explorer
+      // tooltips paint with the host's rounded popover chrome. `aria-label`
+      // (set alongside `title` on icon buttons) still carries the a11y name.
+      const attrName = k === "title" ? "data-tooltip" : k;
+      node.setAttribute(attrName, v === true ? "" : String(v));
     }
   }
   if (opts.style) Object.assign(node.style, opts.style);
@@ -457,15 +497,6 @@ function appendIcon(parent, iconName, opts = {}) {
   parent.appendChild(placeholder);
 }
 
-/** Returns a span with the requested icon. Just calls `appendIcon`
- *  into a fresh span; kept as its own helper so call sites read
- *  declaratively (`row.appendChild(makeIcon("Database01Icon"))`). */
-function makeIcon(iconName, opts = {}) {
-  const wrap = document.createElement("span");
-  appendIcon(wrap, iconName, opts);
-  return wrap;
-}
-
 function safeToast(message, variant) {
   try {
     ctx?.ui?.toast(message, { variant });
@@ -474,14 +505,162 @@ function safeToast(message, variant) {
   }
 }
 
+/** Set (or clear) the custom-tooltip text on a node. Mirrors a `title`
+ *  attribute but routes through the styled tooltip layer instead of the
+ *  OS-native bubble. Empty / null clears it. Used for the many cell tds
+ *  whose tooltip is assigned imperatively after creation. */
+function setTooltipAttr(node, text) {
+  if (!node) return;
+  if (text == null || text === "") node.removeAttribute("data-tooltip");
+  else node.setAttribute("data-tooltip", String(text));
+}
+
+// ----------------------------- Tooltip layer ---------------------------------
+// A single delegated tooltip controller. Native `title` attributes render
+// the OS bubble, which clashes with TEDI's chrome; every `title` in this
+// extension is rewritten to `data-tooltip` (see el() + setTooltipAttr) and
+// surfaced here as a styled popover that mirrors the host's Radix
+// TooltipContent (rounded popover, 1px ring, soft shadow, 11px text, 200 ms
+// hover delay, fade/zoom in). One reused bubble node, positioned with the
+// same prefer-top / flip-to-bottom / clamp-to-viewport logic.
+const TOOLTIP_DELAY_MS = 200;
+const TOOLTIP_OFFSET = 6; // matches host tooltip sideOffset
+const TOOLTIP_PAD = 8; // matches host tooltip collisionPadding
+let tooltipLayer = null;
+
+function initTooltipLayer(root) {
+  if (!root) return null;
+  let bubble = null;
+  let showTimer = null;
+  let current = null;
+
+  const ensureBubble = () => {
+    if (!bubble || !bubble.isConnected) {
+      bubble = document.createElement("div");
+      bubble.className = "tsql-tooltip";
+      bubble.setAttribute("role", "tooltip");
+      document.body.appendChild(bubble);
+    }
+    return bubble;
+  };
+
+  const place = (target) => {
+    const tip = ensureBubble();
+    const r = target.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Prefer above the target; flip below if it would clip the top edge.
+    let top = r.top - th - TOOLTIP_OFFSET;
+    let side = "top";
+    if (top < TOOLTIP_PAD) {
+      top = r.bottom + TOOLTIP_OFFSET;
+      side = "bottom";
+    }
+    if (side === "bottom" && top + th > vh - TOOLTIP_PAD && r.top - th - TOOLTIP_OFFSET >= TOOLTIP_PAD) {
+      top = r.top - th - TOOLTIP_OFFSET;
+      side = "top";
+    }
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(TOOLTIP_PAD, Math.min(left, vw - tw - TOOLTIP_PAD));
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+    tip.dataset.side = side;
+  };
+
+  const show = (target) => {
+    const text = target.getAttribute("data-tooltip");
+    if (!text) return;
+    const tip = ensureBubble();
+    tip.textContent = text;
+    tip.style.visibility = "hidden";
+    tip.classList.add("is-open");
+    // Measure first (visibility:hidden keeps it laid out), then position.
+    place(target);
+    tip.style.visibility = "";
+  };
+
+  const hide = () => {
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    current = null;
+    if (bubble) bubble.classList.remove("is-open");
+  };
+
+  const onOver = (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (!target || target === current || !root.contains(target)) return;
+    current = target;
+    if (showTimer) clearTimeout(showTimer);
+    showTimer = setTimeout(() => {
+      showTimer = null;
+      if (current === target && target.isConnected) show(target);
+    }, TOOLTIP_DELAY_MS);
+  };
+  const onOut = (event) => {
+    if (!current) return;
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (target !== current) return;
+    // Ignore moves that stay inside the same tooltip owner.
+    if (event.relatedTarget && target.contains(event.relatedTarget)) return;
+    hide();
+  };
+  const onFocusIn = (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (!target || !root.contains(target)) return;
+    current = target;
+    if (showTimer) clearTimeout(showTimer);
+    showTimer = setTimeout(() => {
+      showTimer = null;
+      if (current === target && target.isConnected) show(target);
+    }, TOOLTIP_DELAY_MS);
+  };
+
+  root.addEventListener("pointerover", onOver);
+  root.addEventListener("pointerout", onOut);
+  root.addEventListener("focusin", onFocusIn);
+  root.addEventListener("focusout", hide);
+  // A click / scroll / wheel can detach the hovered node or move it out from
+  // under the bubble; drop the tooltip immediately so it never floats orphaned.
+  root.addEventListener("pointerdown", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("wheel", hide, { capture: true, passive: true });
+
+  return {
+    dispose() {
+      hide();
+      root.removeEventListener("pointerover", onOver);
+      root.removeEventListener("pointerout", onOut);
+      root.removeEventListener("focusin", onFocusIn);
+      root.removeEventListener("focusout", hide);
+      root.removeEventListener("pointerdown", hide, true);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("wheel", hide, { capture: true });
+      bubble?.remove();
+      bubble = null;
+    },
+  };
+}
+
 // ----------------------------- Top-level render ------------------------------
 
 function renderPanel(container) {
   const root = el("div", { class: "tsql-root" });
   root.appendChild(renderHeader());
+  // Body is a flex row: [sidebar] [drag splitter] [editor + results]. The
+  // sidebar holds the unified connection/schema/table tree and can be
+  // resized by dragging the splitter or hidden entirely via the header
+  // toggle, so the workbench stays usable in a narrow split pane.
   const body = el("div", { class: "tsql-body" });
-  body.appendChild(renderConnRail());
-  body.appendChild(renderWorkspace());
+  if (!sidebarCollapsed) {
+    body.style.setProperty("--tsql-sidebar-w", `${sidebarWidthPx}px`);
+    body.appendChild(renderSidebar());
+    body.appendChild(makeSidebarSplitter(body));
+  }
+  body.appendChild(renderMainArea());
   root.appendChild(body);
   container.appendChild(root);
 }
@@ -507,7 +686,16 @@ function renderHeader() {
   return el(
     "header",
     { class: "tsql-header" },
-    el("span", { class: "tsql-title", text: "SQL Explorer" }),
+    el(
+      "div",
+      { class: "tsql-header-left" },
+      iconButton(
+        sidebarCollapsed ? "ArrowRight01Icon" : "ArrowLeft01Icon",
+        sidebarCollapsed ? "Show connections" : "Hide connections",
+        toggleSidebar,
+      ),
+      el("span", { class: "tsql-title", text: "SQL Explorer" }),
+    ),
     el(
       "div",
       { class: "tsql-header-actions" },
@@ -515,6 +703,12 @@ function renderHeader() {
       iconButton("Refresh01Icon", "Restart sidecar", restartSidecarFlow),
     ),
   );
+}
+
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  void persistSidebarPrefs();
+  rerender();
 }
 
 function iconButton(iconName, title, onClick) {
@@ -730,23 +924,43 @@ function makeSearchInput({
   return { wrap, input };
 }
 
-// ----------------------------- Connection rail -------------------------------
+// ----------------------------- Left sidebar (unified tree) -------------------
+// One tree: each saved connection is a root node that expands to its
+// databases → schemas → tables. A single search box filters every level.
 
-function renderConnRail() {
-  const list = el("aside", { class: "tsql-conn-rail" });
+function renderSidebar() {
+  const aside = el("aside", { class: "tsql-sidebar" });
+  const head = el("div", { class: "tsql-tree-head" });
+  const { wrap: searchWrap } = makeSearchInput({
+    placeholder: "Search connections, tables…",
+    ariaLabel: "Search connections, databases and tables",
+    inputClass: "tsql-tree-search",
+    wrapClass: "tsql-search-wrap--tree",
+    initialValue: sidebarSearch,
+    onInput: (val) => {
+      sidebarSearch = val;
+      applyTreeFilter(aside, val);
+    },
+  });
+  head.appendChild(searchWrap);
+  aside.appendChild(head);
+
+  const list = el("ul", { class: "tsql-tree-list" });
+  // Connections sit at depth 0; their databases render one level in, schemas
+  // two, tables three (see renderConnNode / renderDbNode / renderSchemaNode).
+  list.style.setProperty("--tsql-depth", "0");
   if (state.connections.length === 0) {
     list.appendChild(
-      el("p", {
-        class: "tsql-empty",
-        text: "No connections yet. Click + to add one.",
-      }),
+      el("li", { class: "tsql-empty", text: "No connections yet. Click + to add one." }),
     );
-    return list;
+  } else {
+    for (const c of state.connections) list.appendChild(renderConnNode(c));
   }
-  for (const c of state.connections) {
-    list.appendChild(renderConnRow(c));
-  }
-  return list;
+  aside.appendChild(list);
+  // Re-apply a pending filter once the (sync) connection rows exist; async
+  // database/table loads re-apply again as they resolve (reapplyTreeFilter).
+  if (sidebarSearch) requestAnimationFrame(() => applyTreeFilter(aside, sidebarSearch));
+  return aside;
 }
 
 /** Display name shown for each backend kind in the rail subtitle and as
@@ -775,22 +989,34 @@ function rowActionBtn(iconName, title, onClick, opts = {}) {
   return btn;
 }
 
-function renderConnRow(c) {
+/** A connection as a tree root. Its row carries the caret + database icon +
+ *  name + hover actions (reload / edit / delete); the child list holds the
+ *  database tree once the connection is expanded. The row is a <div
+ *  role=button> (not a <button>) so the action <button>s can nest legally. */
+function renderConnNode(c) {
   const isActive = state.active === c.id;
-  return el(
-    "div",
-    {
-      class: `tsql-conn-row${isActive ? " is-active" : ""}`,
-      on: {
-        click: () => selectConnection(c.id),
-      },
-    },
-    el(
-      "div",
-      { class: "tsql-conn-meta" },
-      el("span", { class: "tsql-conn-name", text: c.name || c.id }),
-      el("span", { class: "tsql-conn-host", text: connSubtitle(c) }),
-    ),
+  const isOpen = expandedConns.has(c.id);
+  const session = state.sessions[c.id];
+  // Rebuild the active session's tree registry as we re-render its subtree,
+  // so stale element refs from the previous pass can't survive (matches the
+  // old renderTreePane behaviour).
+  if (isActive && session) clearTreeRegistry(session);
+
+  const li = el("li", {
+    class: "tsql-tree-node tsql-node-conn",
+    attrs: { "data-conn-id": c.id },
+  });
+  const caretBox = el("span", { class: `tsql-caret${isOpen ? " is-open" : ""}` });
+  appendIcon(caretBox, "ArrowRight01Icon", { size: 11 });
+  const iconBox = el("span", { class: "tsql-tree-icon" });
+  appendIcon(iconBox, "Database01Icon", { size: 14 });
+  const actions = el(
+    "span",
+    { class: "tsql-tree-actions" },
+    rowActionBtn("Refresh01Icon", "Reload databases", (event) => {
+      event.stopPropagation();
+      refreshConnTree(c);
+    }),
     rowActionBtn("PencilEdit01Icon", "Edit connection", (event) => {
       event.stopPropagation();
       void openConnectionDialog(c);
@@ -805,6 +1031,92 @@ function renderConnRow(c) {
       { danger: true },
     ),
   );
+  const head = el(
+    "div",
+    {
+      class: `tsql-tree-row tsql-conn-head${isActive ? " is-active" : ""}`,
+      attrs: { role: "button", tabindex: "0", title: connSubtitle(c), "aria-label": c.name || c.id },
+      on: {
+        click: () => onConnNodeClick(c),
+        keydown: (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onConnNodeClick(c);
+          }
+        },
+      },
+    },
+    caretBox,
+    iconBox,
+    el("span", { class: "tsql-tree-label", text: c.name || c.id }),
+    actions,
+  );
+  li.appendChild(head);
+
+  const childList = el("ul", { class: "tsql-tree-children" });
+  childList.style.setProperty("--tsql-depth", "1");
+  childList.style.display = isOpen ? "" : "none";
+  li.appendChild(childList);
+
+  if (isOpen && session) {
+    loadDatabases(session, childList)
+      .then(() => scheduleTreeSync(session))
+      .catch((err) =>
+        childList.appendChild(
+          el("li", { class: "tsql-tree-error", text: err?.message ?? String(err) }),
+        ),
+      );
+  }
+  return li;
+}
+
+/** Click a connection root: select + connect it (expanding its tree), or
+ *  toggle the already-active connection open/closed. Only the active
+ *  connection is ever expanded, so every table click maps to the one
+ *  session backing the editor. */
+function onConnNodeClick(c) {
+  if (state.active === c.id) {
+    if (expandedConns.has(c.id)) expandedConns.delete(c.id);
+    else expandedConns.add(c.id);
+    rerender();
+    return;
+  }
+  expandedConns.clear();
+  expandedConns.add(c.id);
+  selectConnection(c.id).catch((err) => {
+    safeToast(`Connect failed: ${err?.message ?? err}`, "error");
+    setTabState("error");
+  });
+}
+
+/** Reload the database subtree for a connection in place (without rebuilding
+ *  the editor). Falls back to selecting it if it isn't the active/open one. */
+function refreshConnTree(c) {
+  const session = state.sessions[c.id];
+  if (state.active !== c.id || !session) {
+    onConnNodeClick(c);
+    return;
+  }
+  expandedConns.add(c.id);
+  const li = panelRoot?.querySelector(`.tsql-node-conn[data-conn-id="${cssEscape(c.id)}"]`);
+  const childList = li?.querySelector(":scope > .tsql-tree-children");
+  if (!childList) {
+    rerender();
+    return;
+  }
+  childList.style.display = "";
+  li.querySelector(":scope > .tsql-tree-row .tsql-caret")?.classList.add("is-open");
+  clearTreeRegistry(session);
+  loadDatabases(session, childList)
+    .then(() => scheduleTreeSync(session))
+    .catch((err) => safeToast(`Reload failed: ${err?.message ?? err}`, "error"));
+}
+
+/** Minimal CSS.escape shim for attribute selectors (connection ids are
+ *  `c-<uuid>` so this only needs to survive the rare odd character). */
+function cssEscape(value) {
+  if (window.CSS?.escape) return window.CSS.escape(value);
+  return String(value).replace(/["\\\]]/g, "\\$&");
 }
 
 function connSubtitle(c) {
@@ -843,7 +1155,7 @@ async function openConnectionDialog(existing) {
   // dark overlay (the SQL Explorer is still usable behind it); the
   // header is a drag handle so the user can reposition it, and the
   // X button closes it. Esc also closes when the dialog has focus.
-  const { root: dialog, body, close } = openDockedDialog({
+  const { body, close } = openDockedDialog({
     title: isEdit ? "Edit connection" : "New connection",
   });
   const form = {
@@ -973,8 +1285,10 @@ async function openConnectionDialog(existing) {
     grid.appendChild(
       field(
         "Query timeout (ms)",
-        input({
+        numberInput({
           value: String(form.query_timeout_ms),
+          min: 0,
+          step: 100,
           onInput: (v) => (form.query_timeout_ms = Number(v) || 0),
         }),
       ),
@@ -982,8 +1296,10 @@ async function openConnectionDialog(existing) {
     grid.appendChild(
       field(
         "Row cap",
-        input({
+        numberInput({
           value: String(form.row_limit),
+          min: 0,
+          step: 100,
           onInput: (v) => (form.row_limit = Number(v) || 0),
         }),
       ),
@@ -1182,6 +1498,17 @@ function input({ type = "text", value = "", onInput, placeholder, dataField } = 
   return node;
 }
 
+/** A `type="number"` input wrapped with themed up/down steppers (see
+ *  makeNumberWrap). Returns the wrapper element; the `onInput` listener fires
+ *  for both typing and stepper clicks. Used for the connection editor's
+ *  numeric fields so they match the cell editor's number chrome. */
+function numberInput({ value = "", onInput, min, step, placeholder, dataField } = {}) {
+  const node = input({ type: "number", value, onInput, placeholder, dataField });
+  if (min != null) node.setAttribute("min", String(min));
+  if (step != null) node.setAttribute("step", String(step));
+  return makeNumberWrap(node);
+}
+
 /**
  * Text-only dropdown that mirrors TEDI's Settings DropdownMenu (shadcn /
  * radix-luma): outline trigger with an ArrowDown01Icon caret, rounded
@@ -1314,6 +1641,10 @@ async function saveAndConnect(form) {
   if (form.kind !== "sqlite") await setSecret(form.id, form.password);
   await connectFromForm(form, { test: false });
   state.active = form.id;
+  // Auto-expand the just-saved connection in the tree (accordion: only the
+  // active connection stays open).
+  expandedConns.clear();
+  expandedConns.add(form.id);
   rerender();
 }
 
@@ -1352,6 +1683,7 @@ async function deleteConnection(id) {
     state.active = null;
     setTabState("disconnected");
   }
+  expandedConns.delete(id);
   delete state.sessions[id];
   rerender();
 }
@@ -1519,9 +1851,6 @@ function ensureSession(id) {
       activeTable: null,
       tableSnapshot: null,
       requestId: null,
-      // Current substring filter on the database tree. Persists across
-      // re-renders so a search-then-switch-tab round trip keeps the filter.
-      dbSearch: "",
       // Cache for the autocomplete source in the query editor. Keyed by
       // `database.schema.table` so MySQL (db == schema) and PostgreSQL
       // (db > schema) both collapse to a stable identifier. `columns` is
@@ -1534,10 +1863,10 @@ function ensureSession(id) {
   // schemaCache was added after some sessions might already exist; backfill
   // so older entries don't crash the completion source on first keystroke.
   if (!state.sessions[id].schemaCache) state.sessions[id].schemaCache = new Map();
-  // Tree navigation registries. Wiped on every rerender (renderWorkspace
-  // calls clearTreeRegistry); rebuilt as the renderer walks DB / schema /
-  // table rows. Lets the SQL-driven tree sync open a DB or scroll a table
-  // into view without re-querying the DOM each time.
+  // Tree navigation registries. Wiped on every rerender (renderConnNode
+  // calls clearTreeRegistry for the active connection); rebuilt as the
+  // renderer walks DB / schema / table rows. Lets the SQL-driven tree sync
+  // open a DB or scroll a table into view without re-querying the DOM.
   if (!state.sessions[id].dbHandles) state.sessions[id].dbHandles = new Map();
   if (!state.sessions[id].schemaHandles) state.sessions[id].schemaHandles = new Map();
   if (!state.sessions[id].tableHandles) state.sessions[id].tableHandles = new Map();
@@ -1721,88 +2050,110 @@ function highlightTableRow(row) {
 
 // ----------------------------- Workspace -------------------------------------
 
-function renderWorkspace() {
-  const work = el("section", { class: "tsql-workspace" });
+// ----------------------------- Main area -------------------------------------
+
+function renderMainArea() {
   if (!state.active) {
-    work.appendChild(
-      el("p", {
-        class: "tsql-empty",
-        text: "Select a connection on the left to start.",
-      }),
+    return el(
+      "section",
+      { class: "tsql-main tsql-main--empty" },
+      el("p", { class: "tsql-empty", text: "Select a connection on the left to start." }),
     );
-    return work;
   }
-  const session = ensureSession(state.active);
-  work.appendChild(renderTreePane(session));
-  work.appendChild(renderEditorAndResults(session));
-  return work;
+  return renderEditorAndResults(ensureSession(state.active));
 }
 
-// ----------------------------- Tree pane -------------------------------------
-
-function renderTreePane(session) {
-  // Tree DOM is reconstructed on every rerender; wipe the navigation
-  // registry so stale element refs from the previous pass don't survive
-  // and crash the SQL-driven sync.
-  clearTreeRegistry(session);
-  const wrap = el("div", { class: "tsql-tree" });
-  // Pin the subheader + search input so they stay visible while the
-  // database tree scrolls underneath. Single sticky wrapper carries the
-  // card-tinted background + bottom border so the rows scrolling below
-  // don't bleed through the search input's transparent edge gutters.
-  const head = el("div", { class: "tsql-tree-head" });
-  head.appendChild(
-    el(
-      "header",
-      { class: "tsql-subheader" },
-      el("span", { text: "Schema" }),
-      iconButton("Refresh01Icon", "Refresh", () => refreshDatabases(session, wrap)),
-    ),
-  );
-  // Inline search box — filters the database list as the user types.
-  // Stored on the session so re-renders keep the current filter, and so
-  // refresh re-applies the filter against the new list.
-  const { wrap: searchWrap } = makeSearchInput({
-    placeholder: "Search databases…",
-    ariaLabel: "Search databases",
-    inputClass: "tsql-tree-search",
-    wrapClass: "tsql-search-wrap--tree",
-    initialValue: session.dbSearch ?? "",
-    onInput: (val) => {
-      session.dbSearch = val;
-      applyDbFilter(wrap, val);
+// Horizontal (col-resize) splitter between the sidebar and the main area.
+// Mirrors the editor/results splitter; drag updates --tsql-sidebar-w on the
+// body and persists the width so it survives a tab reopen.
+function makeSidebarSplitter(body) {
+  const splitter = el("div", {
+    class: "tsql-hsplitter",
+    attrs: {
+      role: "separator",
+      "aria-orientation": "vertical",
+      "aria-label": "Resize sidebar",
+      tabindex: "0",
     },
   });
-  head.appendChild(searchWrap);
-  wrap.appendChild(head);
-  const list = el("ul", { class: "tsql-tree-list" });
-  // Depth drives the per-row left padding so the hover/active background
-  // spans the full pane width while the label stays visually indented.
-  // Root databases sit at depth 0; child lists bump it (see renderDbNode /
-  // renderSchemaNode). The value inherits down to each .tsql-tree-row.
-  list.style.setProperty("--tsql-depth", "0");
-  wrap.appendChild(list);
-  loadDatabases(session, list)
-    .then(() => {
-      // Re-apply the cached search after the async load so a session
-      // returning to the panel with a pending query immediately filters.
-      if (session.dbSearch) applyDbFilter(wrap, session.dbSearch);
-      // Now that the DB rows exist, run one sync pass against the
-      // current editor text. This catches the case where the user
-      // returns to a tab whose SQL already references a known table —
-      // no extra typing needed to land on the right accordion node.
-      scheduleTreeSync(session);
-    })
-    .catch((err) => safeToast(`Failed to load databases: ${err?.message ?? err}`, "error"));
-  return wrap;
+  const MIN_W = 140;
+  splitter.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    const bodyRect = body.getBoundingClientRect();
+    const maxW = Math.max(MIN_W, bodyRect.width - 220);
+    const onMove = (ev) => {
+      const w = Math.max(MIN_W, Math.min(maxW, ev.clientX - bodyRect.left));
+      sidebarWidthPx = Math.round(w);
+      body.style.setProperty("--tsql-sidebar-w", `${sidebarWidthPx}px`);
+    };
+    const onUp = () => {
+      splitter.classList.remove("is-dragging");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { splitter.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      void persistSidebarPrefs();
+    };
+    splitter.classList.add("is-dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    try { splitter.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    e.preventDefault();
+  });
+  splitter.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    sidebarWidthPx = Math.max(MIN_W, sidebarWidthPx + (e.key === "ArrowLeft" ? -16 : 16));
+    body.style.setProperty("--tsql-sidebar-w", `${sidebarWidthPx}px`);
+    void persistSidebarPrefs();
+    e.preventDefault();
+  });
+  return splitter;
 }
 
-async function refreshDatabases(session, wrap) {
-  const list = wrap.querySelector(".tsql-tree-list");
+/** Filter the whole tree: a node stays visible if its own label matches the
+ *  query or any descendant does. Empty query shows everything. Spans the
+ *  connection / database / schema / table levels. */
+function applyTreeFilter(aside, query) {
+  const q = (query || "").trim().toLowerCase();
+  const list = aside?.querySelector(".tsql-tree-list");
   if (!list) return;
-  clearChildren(list);
-  await loadDatabases(session, list);
-  applyDbFilter(wrap, session.dbSearch ?? "");
+  const visit = (node) => {
+    const labelEl = node.querySelector(":scope > .tsql-tree-row .tsql-tree-label");
+    const selfMatch = !q || (labelEl ? labelEl.textContent.toLowerCase().includes(q) : false);
+    let descMatch = false;
+    const children = node.querySelector(":scope > .tsql-tree-children");
+    if (children) {
+      for (const child of children.querySelectorAll(":scope > .tsql-tree-node")) {
+        if (visit(child)) descMatch = true;
+      }
+    }
+    const visible = selfMatch || descMatch;
+    node.style.display = visible ? "" : "none";
+    return visible;
+  };
+  for (const conn of list.querySelectorAll(":scope > .tsql-node-conn")) visit(conn);
+}
+
+/** Re-run the active tree filter after async database/table loads mount new
+ *  rows, so the search keeps hiding non-matches as the tree fills in. */
+function reapplyTreeFilter() {
+  if (!sidebarSearch || !panelRoot) return;
+  const aside = panelRoot.querySelector(".tsql-sidebar");
+  if (aside) applyTreeFilter(aside, sidebarSearch);
+}
+
+async function persistSidebarPrefs() {
+  if (!ctx?.settings?.set) return;
+  try {
+    await ctx.settings.set("sidebar", { width: sidebarWidthPx, collapsed: sidebarCollapsed });
+  } catch (err) {
+    ctx?.logger?.warn?.("save sidebar prefs failed", err);
+  }
 }
 
 async function loadDatabases(session, list) {
@@ -1819,20 +2170,8 @@ async function loadDatabases(session, list) {
   for (const db of databases) {
     list.appendChild(renderDbNode(session, db.name));
   }
-}
-
-/** Filter the visible database rows by name. Case-insensitive substring
- *  match; empty query shows all rows. Children stay attached so toggling
- *  the row open after a search shows the cached schemas/tables. */
-function applyDbFilter(wrap, query) {
-  const q = (query || "").trim().toLowerCase();
-  const list = wrap.querySelector(".tsql-tree-list");
-  if (!list) return;
-  for (const node of list.querySelectorAll(":scope > .tsql-node-db")) {
-    const label = node.querySelector(".tsql-tree-label");
-    const name = label ? label.textContent.toLowerCase() : "";
-    node.style.display = !q || name.includes(q) ? "" : "none";
-  }
+  // New database rows just mounted; re-apply the sidebar search if active.
+  reapplyTreeFilter();
 }
 
 function renderDbNode(session, dbName) {
@@ -1854,8 +2193,9 @@ function renderDbNode(session, dbName) {
   );
   li.appendChild(head);
   const childList = el("ul", { class: "tsql-tree-children" });
-  // Schemas / tables under a database render one indent level in.
-  childList.style.setProperty("--tsql-depth", "1");
+  // Database sits at depth 1 (under its connection); schemas / tables under
+  // it render one level deeper.
+  childList.style.setProperty("--tsql-depth", "2");
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
@@ -1937,6 +2277,7 @@ async function loadSchemas(session, dbName, parent) {
   for (const s of resp.schemas) {
     parent.appendChild(renderSchemaNode(session, dbName, s.name));
   }
+  reapplyTreeFilter();
 }
 
 function renderSchemaNode(session, dbName, schemaName) {
@@ -1954,8 +2295,9 @@ function renderSchemaNode(session, dbName, schemaName) {
   );
   li.appendChild(head);
   const childList = el("ul", { class: "tsql-tree-children" });
-  // Tables under a multi-schema database render two indent levels in.
-  childList.style.setProperty("--tsql-depth", "2");
+  // Tables under a multi-schema database render three indent levels in
+  // (connection → database → schema → table).
+  childList.style.setProperty("--tsql-depth", "3");
   childList.style.display = "none";
   li.appendChild(childList);
   let loaded = false;
@@ -2023,6 +2365,8 @@ async function loadTables(session, database, schema, parent) {
   // Cache just gained a batch of table names; replay the SQL-driven
   // sync in case the user typed the table before its DB was expanded.
   scheduleTreeSync(session);
+  // Table rows just mounted; re-apply the sidebar search if active.
+  reapplyTreeFilter();
 }
 
 function renderTableNode(session, database, schema, info) {
@@ -2150,7 +2494,7 @@ function renderEditorAndResults(session) {
     editorWrap.appendChild(
       el("p", {
         class: "tsql-empty",
-        text: "Code editor unavailable. Update TEDI to >= 0.2.26.",
+        text: "Code editor unavailable. Update TEDI to >= 0.3.9.",
       }),
     );
   }
@@ -2256,7 +2600,7 @@ function renderQueryResult(container, session) {
           click: () => {
             tabs.querySelectorAll(".tsql-result-tab").forEach((t) => t.classList.remove("is-active"));
             tab.classList.add("is-active");
-            renderStatementDetail(content, stmt, language);
+            renderStatementDetail(content, stmt, language, session);
           },
         },
       });
@@ -2265,7 +2609,7 @@ function renderQueryResult(container, session) {
     container.appendChild(tabs);
   }
   container.appendChild(content);
-  renderStatementDetail(content, statements[0], language);
+  renderStatementDetail(content, statements[0], language, session);
 }
 
 function tabLabel(stmt) {
@@ -2274,7 +2618,7 @@ function tabLabel(stmt) {
   return `error · ${stmt.elapsed_ms} ms`;
 }
 
-function renderStatementDetail(container, stmt, language) {
+function renderStatementDetail(container, stmt, language, session) {
   clearChildren(container);
   // Re-rendering this slot (fresh result or a statement-tab switch) drops
   // the prior preview editor's DOM; destroy the EditorView too so it
@@ -2288,6 +2632,7 @@ function renderStatementDetail(container, stmt, language) {
       elapsedMs: stmt.elapsed_ms,
       truncated: stmt.truncated,
       language,
+      session,
     });
     return;
   }
@@ -2344,13 +2689,17 @@ function renderSqlPreview(sql, language) {
 const GRID_PAGE_SIZE = 100;
 
 function renderResultGrid(container, opts) {
-  const { sql, columns, rows, elapsedMs, truncated, language } = opts;
+  const { sql, columns, rows, elapsedMs, truncated, language, session } = opts;
   const grid = {
     query: "",
     page: 0,
     filtered: rows,
   };
   let searchTimer = null;
+  // Resolved asynchronously below: non-null once this result is recognised
+  // as a single-table SELECT whose rows can be edited in place. redraw()
+  // reads it each pass, so a late resolve simply re-wires the live cells.
+  let editCtx = null;
 
   // Meta bar: row count + duration on the left, search on the right.
   // Pagination is no longer crammed into this bar; it lives in a bottom
@@ -2419,8 +2768,17 @@ function renderResultGrid(container, opts) {
     if (truncated && !grid.query) {
       leftMeta.appendChild(el("span", { class: "tsql-tag tsql-tag--warn", text: "truncated" }));
     }
+    if (editCtx) {
+      const tag = el("span", {
+        class: "tsql-tag tsql-tag--edit",
+        attrs: { title: `Double-click a cell to edit. Changes write to ${editCtx.table}.` },
+      });
+      appendIcon(tag, "PencilEdit01Icon", { size: 11 });
+      tag.appendChild(document.createTextNode("editable"));
+      leftMeta.appendChild(tag);
+    }
 
-    gridSlot.replaceChildren(buildGridTable(columns, slice));
+    gridSlot.replaceChildren(buildGridTable(columns, slice, editCtx));
 
     const hasPrev = grid.page > 0;
     const hasNext = grid.page < totalPages - 1;
@@ -2456,6 +2814,20 @@ function renderResultGrid(container, opts) {
   }
 
   redraw();
+
+  // Resolve editability off the main render path. If the statement turns out
+  // to be a plain single-table SELECT on a writable connection, wire the
+  // cells for inline edit and surface the "editable" pill. Cheap no-op for
+  // joins / aggregates / read-only connections (resolves to null).
+  if (session) {
+    resolveQueryEditContext(session, sql, columns)
+      .then((resolved) => {
+        if (!resolved || !container.isConnected) return;
+        editCtx = resolved;
+        redraw();
+      })
+      .catch((err) => ctx?.logger?.warn?.("query edit resolve failed", err));
+  }
 }
 
 function rowMatches(row, needle) {
@@ -2471,8 +2843,8 @@ function rowMatches(row, needle) {
   return false;
 }
 
-function buildGridTable(columns, rows) {
-  const wrap = el("div", { class: "tsql-grid-wrap" });
+function buildGridTable(columns, rows, editCtx) {
+  const wrap = el("div", { class: `tsql-grid-wrap${editCtx ? " is-editable" : ""}` });
   const table = el("table", { class: "tsql-grid" });
   const thead = el("thead");
   const headRow = el("tr");
@@ -2482,7 +2854,18 @@ function buildGridTable(columns, rows) {
   const tbody = el("tbody");
   for (const row of rows) {
     const tr = el("tr");
-    for (const cell of row) tr.appendChild(renderCellTd(cell));
+    row.forEach((cell, ci) => {
+      const td = renderCellTd(cell);
+      // When the result maps to an editable table, columns that correspond
+      // to real table columns get the spreadsheet affordance + double-click
+      // edit. The backing `row` array is passed (not an index) so edits and
+      // PK lookups stay correct across the grid's client-side pagination.
+      if (editCtx && editCtx.editableColIdx.has(ci)) {
+        td.classList.add("tsql-cell-editable");
+        td.addEventListener("dblclick", () => beginQueryCellEdit(editCtx, row, ci, td));
+      }
+      tr.appendChild(td);
+    });
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
@@ -2493,7 +2876,7 @@ function buildGridTable(columns, rows) {
 function renderCellTd(value) {
   const td = el("td");
   td.appendChild(renderCellContent(value));
-  td.title = cellTooltip(value);
+  setTooltipAttr(td, cellTooltip(value));
   return td;
 }
 
@@ -2521,6 +2904,165 @@ function cellTooltip(value) {
   }
   if (value && typeof value === "object") return JSON.stringify(value);
   return value == null ? "NULL" : String(value);
+}
+
+// ------------------------- Editable query results ----------------------------
+// Free-form query results are normally read-only, but the common case of a
+// plain `SELECT ... FROM one_table` maps 1:1 to base-table rows and can be
+// edited in place using the same /table-update path as the table-browse grid.
+// resolveQueryEditContext figures out whether that mapping is safe; cells then
+// reuse mountTypedEditor via beginQueryCellEdit.
+
+/**
+ * Decide whether a free-form query result can be edited in place, and if so
+ * build its edit context. Editable only when the statement is a plain
+ * single-table SELECT against a base table (not a view) on a writable
+ * connection, the table has a primary key, and every PK column is present in
+ * the result so each row can be uniquely addressed. Returns null (read-only)
+ * for joins, aggregates, unions, views, or projections with no real columns.
+ */
+async function resolveQueryEditContext(session, sql, columns) {
+  if (!session || !isSingleTableSelect(sql)) return null;
+  const refs = parseSqlReferences(sql);
+  if (refs.length !== 1) return null;
+  const match = findCachedMatch(session, refs);
+  if (!match || match.kind === "view") return null;
+  const conn = state.connections.find((c) => c.id === session.connId);
+  if (conn && conn.allow_writes === false) return null;
+
+  // Column metadata, memoised per table on the session so repeated renders
+  // (tab switches, re-runs of the same statement) don't re-hit /columns.
+  const tkey = `${match.database}.${match.schema}.${match.table}`;
+  session._qcols = session._qcols || new Map();
+  let info = session._qcols.get(tkey);
+  if (!info) {
+    try {
+      info = await fetchTableColumns(session.connId, match);
+    } catch {
+      return null;
+    }
+    session._qcols.set(tkey, info);
+  }
+  const cols = info?.columns ?? [];
+  if (!cols.length) return null;
+
+  // Match identifiers case-insensitively so an upper/lower-case alias in the
+  // SELECT still resolves to its base column.
+  const byName = new Map(cols.map((c) => [String(c.name).toLowerCase(), c]));
+  const pks = cols.filter((c) => c.is_primary).map((c) => c.name);
+  if (pks.length === 0) return null;
+
+  // Every PK must be projected so we can build a unique WHERE per row.
+  const pkResultIdx = new Map();
+  for (const pk of pks) {
+    const ri = columns.findIndex((name) => String(name).toLowerCase() === pk.toLowerCase());
+    if (ri < 0) return null;
+    pkResultIdx.set(pk, ri);
+  }
+
+  // Map each result column that corresponds to a real, editable base column.
+  const colByIdx = new Map();
+  const editableColIdx = new Set();
+  columns.forEach((name, ci) => {
+    const colInfo = byName.get(String(name).toLowerCase());
+    if (colInfo) {
+      colByIdx.set(ci, colInfo);
+      editableColIdx.add(ci);
+    }
+  });
+  if (editableColIdx.size === 0) return null;
+
+  return {
+    connId: session.connId,
+    database: match.database,
+    schema: match.schema,
+    table: match.table,
+    pks,
+    pkResultIdx,
+    colByIdx,
+    editableColIdx,
+  };
+}
+
+/** True for a single-table `SELECT` whose rows map 1:1 to base-table rows.
+ *  Comments + string literals are stripped first so keywords inside them
+ *  don't trip the guards. Rejects joins (keyword + comma), set operations,
+ *  GROUP BY / HAVING, and DISTINCT, which all break the row-to-row mapping
+ *  inline editing relies on. */
+function isSingleTableSelect(sql) {
+  const clean = String(sql || "")
+    .replace(/--[^\r\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/'(?:''|[^'])*'/g, "''");
+  if (!/^\s*select\b/i.test(clean)) return false;
+  if (/\bjoin\b/i.test(clean)) return false;
+  if (/\bgroup\s+by\b/i.test(clean)) return false;
+  if (/\bhaving\b/i.test(clean)) return false;
+  if (/\bdistinct\b/i.test(clean)) return false;
+  if (/\b(union|intersect|except)\b/i.test(clean)) return false;
+  // Comma (cross) join inside the FROM clause → more than one table.
+  const from = /\bfrom\b([\s\S]*?)(\bwhere\b|\bgroup\b|\border\b|\blimit\b|\bhaving\b|\bwindow\b|$)/i.exec(clean);
+  if (from && from[1].includes(",")) return false;
+  return true;
+}
+
+/**
+ * Inline-edit a single cell of an editable query result. Mirrors the
+ * table-browse path (beginCellEdit) but resolves table identity, PK values,
+ * and column type from the editCtx + the backing result row rather than a
+ * session.tableSnapshot. On success the new value is written back into the
+ * row array so pagination / re-renders keep the edit.
+ */
+function beginQueryCellEdit(editCtx, row, colIdx, td) {
+  const original = row[colIdx];
+  if (isBytesCell(original)) {
+    safeToast("Binary cells aren't editable inline yet.", "warning");
+    return;
+  }
+  const colInfo = editCtx.colByIdx.get(colIdx);
+  if (!colInfo) return;
+  const colName = colInfo.name;
+  const type = classifyColumnType(colInfo);
+  const nullable = colInfo.nullable !== false;
+
+  const revert = () => {
+    td.replaceChildren(renderCellContent(original));
+    setTooltipAttr(td, cellTooltip(original));
+  };
+
+  const commit = async (next) => {
+    if (deepEqual(next, original)) {
+      revert();
+      return;
+    }
+    const pkMap = {};
+    for (const pk of editCtx.pks) {
+      pkMap[pk] = row[editCtx.pkResultIdx.get(pk)];
+    }
+    try {
+      await fetchJson("/table-update", {
+        method: "POST",
+        body: {
+          conn: editCtx.connId,
+          database: editCtx.database,
+          schema: editCtx.schema,
+          table: editCtx.table,
+          pk: pkMap,
+          values: { [colName]: next },
+        },
+      });
+      row[colIdx] = next;
+      td.replaceChildren(renderCellContent(next));
+      setTooltipAttr(td, cellTooltip(next));
+      td.classList.add("tsql-cell-saved");
+      setTimeout(() => td.classList.remove("tsql-cell-saved"), 800);
+    } catch (err) {
+      revert();
+      safeToast(`Update failed: ${err?.message ?? err}`, "error");
+    }
+  };
+
+  mountTypedEditor(td, { type, nullable, original, colInfo, commit, cancel: revert });
 }
 
 // ----------------------------- Editable table grid ---------------------------
@@ -2760,7 +3302,8 @@ function renderTableGrid(container, session) {
         },
       });
       td.appendChild(renderCellContent(cell));
-      td.title = cellTooltip(cell);
+      setTooltipAttr(td, cellTooltip(cell));
+      td.classList.add("tsql-cell-editable");
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -2906,14 +3449,11 @@ function isoToInputValue(kind, value) {
 }
 
 /** Convert the value coming out of an HTML5 date/time/datetime input back
- *  to the canonical text representation the SQL backend accepts. */
-function inputValueToIso(kind, value) {
-  if (value === "") return null;
-  if (kind === "date") return value; // YYYY-MM-DD
-  if (kind === "time") return value; // HH:MM(:SS)
-  // datetime-local: "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS".
-  // MySQL DATETIME accepts both with " " or "T"; keep "T" for clarity.
-  return value;
+ *  to the canonical text the SQL backend accepts. The widget already yields
+ *  that form (YYYY-MM-DD, HH:MM(:SS), YYYY-MM-DDTHH:MM(:SS)); only the empty
+ *  field needs mapping to NULL. */
+function inputValueToIso(value) {
+  return value === "" ? null : value;
 }
 
 async function beginCellEdit(session, rowIdx, colIdx, td) {
@@ -2939,7 +3479,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
   const commitWith = async (next) => {
     if (deepEqual(next, original)) {
       td.replaceChildren(renderCellContent(original));
-      td.title = cellTooltip(original);
+      setTooltipAttr(td, cellTooltip(original));
       return;
     }
     const pkMap = {};
@@ -2948,7 +3488,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
       if (idx < 0) {
         safeToast(`Primary key ${pk} not in current grid; refresh first.`, "warning");
         td.replaceChildren(renderCellContent(original));
-        td.title = cellTooltip(original);
+        setTooltipAttr(td, cellTooltip(original));
         return;
       }
       pkMap[pk] = snap.rows[rowIdx][idx];
@@ -2967,24 +3507,40 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
       });
       snap.rows[rowIdx][colIdx] = next;
       td.replaceChildren(renderCellContent(next));
-      td.title = cellTooltip(next);
+      setTooltipAttr(td, cellTooltip(next));
       td.classList.add("tsql-cell-saved");
       setTimeout(() => td.classList.remove("tsql-cell-saved"), 800);
     } catch (err) {
       td.replaceChildren(renderCellContent(original));
-      td.title = cellTooltip(original);
+      setTooltipAttr(td, cellTooltip(original));
       safeToast(`Update failed: ${err?.message ?? err}`, "error");
     }
   };
 
   const cancel = () => {
     td.replaceChildren(renderCellContent(original));
-    td.title = cellTooltip(original);
+    setTooltipAttr(td, cellTooltip(original));
   };
 
-  // Render the typed editor. Each branch returns the editor element so
-  // we can focus it after mount; commit/cancel wiring is centralised
-  // below for keystroke + blur consistency.
+  // Typed widget creation + commit/cancel wiring is shared with the
+  // editable query-result grid via mountTypedEditor.
+  mountTypedEditor(td, { type, nullable, original, colInfo, commit: commitWith, cancel });
+}
+
+/**
+ * Build, mount, focus, and wire the typed inline-edit widget for one grid
+ * cell. Shared by the table-browse grid (beginCellEdit) and the editable
+ * query-result grid (beginQueryCellEdit) so both use identical widgets and
+ * keyboard behaviour. Storage-agnostic: the caller supplies `commit(next)`
+ * and `cancel()`, which close over the cell + backing row.
+ *
+ * Recognises boolean / enum / date / time / datetime / integer / number /
+ * json / text. Commits on Enter (Shift+Enter keeps newlines in the JSON
+ * textarea), on blur, and on change for the dropdown widgets; cancels on
+ * Escape. Number widgets get themed up/down steppers in place of the
+ * OS-native spin buttons.
+ */
+function mountTypedEditor(td, { type, nullable, original, colInfo, commit, cancel }) {
   let editor;
   let resolveValue;
   let committedOnChange = false;
@@ -3031,7 +3587,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
     // For dropdowns, commit on change so the user doesn't have to tab out.
     editor.addEventListener("change", () => {
       committedOnChange = true;
-      commitWith(resolveValue());
+      commit(resolveValue());
     });
   } else if (enumType) {
     editor = el("select", { class: "tsql-input tsql-cell-input tsql-cell-input--enum" });
@@ -3048,7 +3604,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
     };
     editor.addEventListener("change", () => {
       committedOnChange = true;
-      commitWith(resolveValue());
+      commit(resolveValue());
     });
   } else if (type === "date" || type === "time" || type === "datetime") {
     const htmlType =
@@ -3058,7 +3614,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
       attrs: { type: htmlType, step: type === "date" ? undefined : "1" },
     });
     editor.value = isoToInputValue(type, original);
-    resolveValue = () => inputValueToIso(type, editor.value);
+    resolveValue = () => inputValueToIso(editor.value);
   } else if (type === "integer" || type === "number") {
     editor = el("input", {
       class: `tsql-input tsql-cell-input tsql-cell-input--${type}`,
@@ -3108,8 +3664,13 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
     };
   }
 
+  // Number inputs mount inside a stepper wrapper so the OS spin button is
+  // replaced by themed up/down controls; every other widget mounts bare.
+  const mountNode =
+    editor.tagName === "INPUT" && editor.type === "number" ? makeNumberWrap(editor) : editor;
+
   clearChildren(td);
-  td.appendChild(editor);
+  td.appendChild(mountNode);
   if (typeof editor.focus === "function") editor.focus();
   if (typeof editor.select === "function" && editor.tagName !== "SELECT") {
     try {
@@ -3122,7 +3683,7 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
   const blurCommit = () => {
     if (committedOnChange) return;
     committedOnChange = true;
-    commitWith(resolveValue());
+    commit(resolveValue());
   };
   editor.addEventListener("blur", blurCommit);
   editor.addEventListener("keydown", (event) => {
@@ -3132,13 +3693,53 @@ async function beginCellEdit(session, rowIdx, colIdx, td) {
       if (editor.tagName === "TEXTAREA" && event.shiftKey) return;
       event.preventDefault();
       committedOnChange = true;
-      commitWith(resolveValue());
+      commit(resolveValue());
     } else if (event.key === "Escape") {
       event.preventDefault();
       committedOnChange = true;
       cancel();
     }
   });
+}
+
+/**
+ * Wrap a `<input type="number">` in a container with themed up/down stepper
+ * buttons. The native WebView2 spin button renders light-on-dark and clashes
+ * with the workbench chrome, so it's hidden in CSS and replaced here. Buttons
+ * preventDefault on mousedown to keep focus on the input (so an inline cell
+ * editor's blur-commit doesn't fire mid-step), step the value via the native
+ * stepUp/stepDown, then dispatch `input` so any onInput listener stays in sync.
+ */
+function makeNumberWrap(editor) {
+  const wrap = el("div", { class: "tsql-num" });
+  wrap.appendChild(editor);
+  const steps = el("div", { class: "tsql-num-steps" });
+  const makeStep = (dir, iconName, label) => {
+    const btn = el("button", {
+      class: "tsql-num-step",
+      attrs: { type: "button", tabindex: "-1", "aria-label": label },
+    });
+    appendIcon(btn, iconName, { size: 9, strokeWidth: 2.5 });
+    btn.addEventListener("mousedown", (event) => event.preventDefault());
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      try {
+        if (dir > 0) editor.stepUp();
+        else editor.stepDown();
+      } catch {
+        // stepUp/stepDown throws when the field is empty / non-numeric;
+        // seed a sensible first step instead.
+        editor.value = dir > 0 ? "1" : "-1";
+      }
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.focus();
+    });
+    return btn;
+  };
+  steps.appendChild(makeStep(1, "ArrowUp01Icon", "Increment"));
+  steps.appendChild(makeStep(-1, "ArrowDown01Icon", "Decrement"));
+  wrap.appendChild(steps);
+  return wrap;
 }
 
 /** Loose text → JS-value coercion for the legacy Insert dialog. The inline
@@ -3166,13 +3767,25 @@ function deepEqual(a, b) {
   return false;
 }
 
-async function ensurePkColumns(session) {
-  if (session._pkCache?.table === session.activeTable.table) return session._pkCache.pks;
-  const resp = await fetchJson(
-    `/columns?conn=${encodeURIComponent(session.connId)}&database=${encodeURIComponent(session.activeTable.database)}&schema=${encodeURIComponent(session.activeTable.schema)}&table=${encodeURIComponent(session.activeTable.table)}`,
+/** Fetch the `/columns` metadata (name, data_type, full_type, nullable,
+ *  is_primary, ...) for a `{ database, schema, table }` target on a
+ *  connection. The raw sidecar response (`{ columns: [...] }`). */
+async function fetchTableColumns(connId, target) {
+  return fetchJson(
+    `/columns?conn=${encodeURIComponent(connId)}&database=${encodeURIComponent(target.database)}&schema=${encodeURIComponent(target.schema)}&table=${encodeURIComponent(target.table)}`,
   );
+}
+
+async function ensurePkColumns(session) {
+  const t = session.activeTable;
+  // Key by the fully-qualified identifier (matching schemaCache / _qcols) so
+  // two same-named tables in different databases/schemas don't return each
+  // other's PK + column metadata, which would build a wrong WHERE on edit.
+  const key = `${t.database}.${t.schema}.${t.table}`;
+  if (session._pkCache?.key === key) return session._pkCache.pks;
+  const resp = await fetchTableColumns(session.connId, t);
   const pks = resp.columns.filter((c) => c.is_primary).map((c) => c.name);
-  session._pkCache = { table: session.activeTable.table, pks, columns: resp.columns };
+  session._pkCache = { key, pks, columns: resp.columns };
   return pks;
 }
 
@@ -3304,7 +3917,16 @@ async function runActiveQuery() {
   if (!state.active) return;
   const session = ensureSession(state.active);
   if (!session.sql.trim()) return;
-  if (containsDestructive(session.sql) && !confirmDestructive(session.sql)) return;
+  if (containsDestructive(session.sql)) {
+    const ok = await openConfirmDialog({
+      title: "Run destructive statement?",
+      message:
+        "This query looks destructive (DROP / TRUNCATE / GRANT). Run it against the connected database?",
+      confirmLabel: "Run",
+      destructive: true,
+    });
+    if (!ok) return;
+  }
   await ensureSidecar();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   session.requestId = requestId;
@@ -3367,11 +3989,6 @@ async function cancelActiveQuery() {
 const DESTRUCTIVE_REGEX = /\b(DROP\s+(DATABASE|SCHEMA|TABLE)|TRUNCATE\s+TABLE?|DROP\s+ROLE|GRANT\s+ALL)\b/i;
 function containsDestructive(sql) {
   return DESTRUCTIVE_REGEX.test(sql);
-}
-function confirmDestructive(sql) {
-  return confirm(
-    "This query looks destructive (DROP / TRUNCATE / GRANT).\nType OK in the next prompt to proceed.",
-  ) && prompt("Type OK to confirm:") === "OK";
 }
 
 // ----------------------------- Export dialog ---------------------------------
@@ -3478,7 +4095,12 @@ async function openExportDialog() {
 // ----------------------------- Misc actions ----------------------------------
 
 async function restartSidecarFlow() {
-  if (!confirm("Restart the SQL sidecar? Active connections will be closed.")) return;
+  const ok = await openConfirmDialog({
+    title: "Restart SQL sidecar?",
+    message: "Active connections will be closed.",
+    confirmLabel: "Restart",
+  });
+  if (!ok) return;
   try {
     if (sidecar?.handle != null) await ctx.invoke("shell_bg_kill", { handle: sidecar.handle });
   } catch {
@@ -3519,21 +4141,26 @@ const STYLES_CSS = `
 .tsql-icon-btn:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
 .tsql-icon-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 
-/* Responsive 2-pane shell: connection rail + workspace. The rail shrinks
-   on narrow windows; below 720 px the connection list collapses into a
-   horizontal strip above the workspace. */
-.tsql-body { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
-.tsql-conn-rail { border-right: 1px solid var(--border); overflow-y: auto; padding: 0 0 2px; min-width: 0; }
-/* Text-only rail row. Name + subtitle on the left, two action buttons
-   on the right. No brand icon column — engine kind reads from the
-   subtitle so the list stays compact and matches TEDI's chrome. */
-.tsql-conn-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px 20px; gap: 4px; align-items: center; padding: 4px 8px; cursor: pointer; border-left: 2px solid transparent; border-radius: 0; }
-.tsql-conn-row:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.06))); }
-.tsql-conn-row.is-active { background: var(--accent, rgba(127,127,127,0.12)); color: var(--accent-foreground, var(--foreground)); border-left-color: var(--primary, #3b82f6); }
-
-.tsql-conn-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; line-height: 1.25; }
-.tsql-conn-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tsql-conn-host { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Body is a flex row: resizable sidebar | drag splitter | editor+results.
+   The sidebar holds the unified connection → database → schema → table tree
+   and can be resized (splitter) or hidden (header toggle) so the workbench
+   stays usable inside a narrow split pane. */
+.tsql-body { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.tsql-header-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.tsql-sidebar { flex: 0 0 var(--tsql-sidebar-w, 240px); width: var(--tsql-sidebar-w, 240px); display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; min-height: 0; overflow: hidden; }
+/* Horizontal (col-resize) splitter; mirrors .tsql-splitter chrome on the
+   vertical axis (thin hairline + centred grip, primary tint on hover/drag). */
+.tsql-hsplitter { position: relative; flex: 0 0 6px; cursor: col-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
+.tsql-hsplitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: color-mix(in srgb, var(--border) 50%, transparent); transition: background 0.12s ease; }
+.tsql-hsplitter::after { content: ""; position: relative; z-index: 1; width: 4px; height: 24px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
+.tsql-hsplitter:hover::before, .tsql-hsplitter.is-dragging::before, .tsql-hsplitter:focus-visible::before { background: color-mix(in srgb, var(--primary, #3b82f6) 50%, transparent); }
+.tsql-hsplitter:hover::after, .tsql-hsplitter.is-dragging::after, .tsql-hsplitter:focus-visible::after { background: var(--primary, #3b82f6); }
+/* Connection root row: bolder label + a primary-tinted icon when active, and
+   hover-revealed reload / edit / delete actions in the trailing grid cell. */
+.tsql-conn-head .tsql-tree-label { font-weight: 600; }
+.tsql-conn-head.is-active .tsql-tree-icon { color: var(--primary, #3b82f6); }
+.tsql-tree-actions { display: inline-flex; align-items: center; gap: 1px; opacity: 0; transition: opacity 0.12s ease; }
+.tsql-tree-row:hover .tsql-tree-actions, .tsql-tree-row:focus-within .tsql-tree-actions, .tsql-tree-row:focus-visible .tsql-tree-actions { opacity: 1; }
 .tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: var(--radius, 0); display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-row-action:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
 /* Destructive variant for delete / trash row actions. Rest sits at the
@@ -3546,12 +4173,9 @@ const STYLES_CSS = `
 .tsql-row-action.is-danger:hover { background: color-mix(in srgb, var(--destructive, #ef4444) 12%, transparent); color: var(--destructive, #ef4444); }
 .tsql-row-action.is-danger:focus-visible { color: var(--destructive, #ef4444); outline: 1px solid var(--destructive, #ef4444); outline-offset: -1px; }
 
-/* Workspace: schema tree (auto-shrinking) + editor / results column. */
-.tsql-workspace { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); min-width: 0; min-height: 0; }
-.tsql-tree { display: flex; flex-direction: column; border-right: 1px solid var(--border); min-height: 0; min-width: 0; }
-/* Sticky head holds the "Schema" subheader + search input. Pinning the
-   wrapper (not the children individually) keeps the input's horizontal
-   margin gutters opaque so rows scrolling under it don't show through. */
+/* Sticky head holds the sidebar search input. Pinning the wrapper (not the
+   children individually) keeps the input's horizontal margin gutters opaque
+   so rows scrolling under it don't show through. */
 .tsql-tree-head { flex: 0 0 auto; background: var(--card, var(--background)); padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .tsql-tree-head .tsql-subheader { border-bottom: 0; }
 .tsql-subheader { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-weight: 500; color: var(--muted-foreground); background: var(--card, var(--background)); gap: 8px; }
@@ -3629,7 +4253,8 @@ const STYLES_CSS = `
 .tsql-tree-error { padding: 4px 12px 4px calc(12px + var(--tsql-depth, 0) * 14px); color: var(--destructive, #ef4444); font-size: 11px; }
 .tsql-tree-empty { padding: 4px 16px 4px calc(16px + var(--tsql-depth, 0) * 14px); color: var(--muted-foreground); font-size: 11px; }
 
-.tsql-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.tsql-main { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.tsql-main--empty { align-items: center; justify-content: center; }
 .tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
 /* Buttons match the host's <Button variant="ghost"> chrome: 1 px
    transparent border at rest so the hover bg paints as a clean box
@@ -3854,29 +4479,82 @@ const STYLES_CSS = `
 .tsql-table-title { font-weight: 600; color: var(--foreground); }
 .tsql-error-line { color: var(--destructive, #ef4444); font-weight: 600; }
 .tsql-error-text { padding: 10px 12px; background: color-mix(in srgb, var(--destructive, #ef4444) 8%, transparent); color: var(--destructive, #ef4444); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
-.tsql-sql-source { padding: 10px 12px; background: var(--accent, rgba(127,127,127,0.06)); color: var(--muted-foreground); font-family: var(--font-mono, monospace); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+
+/* Custom tooltip bubble. Mirrors the host's Radix TooltipContent: --popover
+   surface, a 1 px foreground-tinted ring, soft shadow, 11 px text, and the
+   same square corners as the rest of TEDI (host sets --radius-2xl: 0). Fades
+   + zooms in like the host tooltip. position:fixed + JS-set left/top so it
+   escapes the result grid's overflow:auto clipping. */
+.tsql-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4000;
+  pointer-events: none;
+  box-sizing: border-box;
+  max-width: 20rem;
+  padding: 6px 12px;
+  border-radius: var(--radius, 0);
+  background: var(--popover, var(--card, var(--background)));
+  color: var(--popover-foreground, var(--foreground));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent), 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.375;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0;
+  transform: scale(0.96);
+  transform-origin: 50% 100%;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.tsql-tooltip[data-side="bottom"] { transform-origin: 50% 0%; }
+.tsql-tooltip.is-open { opacity: 1; transform: scale(1); }
+
+/* Editable grid cell affordance: the spreadsheet "cell" cursor signals the
+   double-click-to-edit behaviour without adding visual noise. */
+.tsql-cell-editable { cursor: cell; }
+
+/* "Editable" pill in the query-result meta bar, shown once a free-form
+   result is recognised as a single-table SELECT that can be edited in place.
+   Soft primary tint so it reads as an affordance, not a warning. */
+.tsql-tag--edit {
+  gap: 4px;
+  background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent);
+  color: var(--primary, #3b82f6);
+  cursor: default;
+}
+.tsql-tag--edit > svg, .tsql-tag--edit > * { display: block; }
+
+/* Number inputs: the OS-native spin buttons render as a light-on-dark block
+   in WebView2 (the host sets no color-scheme), clashing with the themed
+   chrome. Hide them and supply our own stacked up/down steppers that paint
+   with --muted-foreground + the standard hover lift, matching the icon-button
+   chrome used across the workbench. */
+.tsql-input[type="number"]::-webkit-outer-spin-button,
+.tsql-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+.tsql-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.tsql-num { position: relative; display: inline-flex; align-items: stretch; width: 100%; box-sizing: border-box; }
+.tsql-num > .tsql-input { flex: 1 1 auto; width: 100%; padding-right: 22px; }
+.tsql-num-steps { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 18px; display: flex; flex-direction: column; border-radius: var(--radius, 0); overflow: hidden; pointer-events: none; }
+.tsql-num-step { flex: 1 1 50%; min-height: 0; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; outline: none; pointer-events: auto; transition: background-color 0.12s ease, color 0.12s ease; }
+.tsql-num-step:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.16))); color: var(--foreground); }
+.tsql-num-step:active { background: var(--accent, rgba(127,127,127,0.24)); }
+.tsql-num-step > svg, .tsql-num-step > * { display: block; pointer-events: none; }
 
 /* Narrow-window adaptations. The connection rail collapses into a single
    compressed row above the workspace; the schema tree also gets tighter. */
+/* Narrow-width tweaks. The sidebar is now resizable + collapsible, so the
+   layout no longer needs grid-collapse breakpoints — only the result-grid
+   toolbar controls shrink to keep the toolbar single-row. */
 @media (max-width: 960px) {
-  .tsql-workspace { grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); }
   .tsql-input.tsql-grid-search { width: 140px; }
   .tsql-search-wrap--grid { width: 140px; }
   .tsql-select.tsql-grid-colfilter { max-width: 140px; min-width: 84px; }
 }
-@media (max-width: 720px) {
-  .tsql-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .tsql-conn-rail { border-right: 0; border-bottom: 1px solid var(--border); max-height: 120px; }
-  .tsql-workspace { grid-template-columns: minmax(160px, 200px) minmax(0, 1fr); }
-  .tsql-search-wrap--grid { width: 130px; }
-  .tsql-input.tsql-grid-search { width: 130px; }
-}
 @media (max-width: 540px) {
-  .tsql-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .tsql-tree { border-right: 0; border-bottom: 1px solid var(--border); max-height: 160px; }
   .tsql-toolbar { padding: 5px 8px; gap: 4px; }
   .tsql-btn { padding: 4px 8px; }
-  .tsql-subheader { padding: 6px 8px; flex-wrap: wrap; }
   .tsql-search-wrap--grid { width: 120px; }
   .tsql-input.tsql-grid-search { width: 120px; }
   .tsql-select.tsql-grid-colfilter { max-width: 120px; min-width: 80px; }

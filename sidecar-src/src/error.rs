@@ -15,9 +15,6 @@ use serde_json::json;
 pub enum AppError {
     BadRequest(String),
     NotFound(String),
-    Unauthorized,
-    Conflict(String),
-    Internal(String),
     Database(String),
     Canceled,
     Timeout,
@@ -28,9 +25,6 @@ impl std::fmt::Display for AppError {
         match self {
             AppError::BadRequest(m) => write!(f, "bad request: {m}"),
             AppError::NotFound(m) => write!(f, "not found: {m}"),
-            AppError::Unauthorized => write!(f, "unauthorized"),
-            AppError::Conflict(m) => write!(f, "conflict: {m}"),
-            AppError::Internal(m) => write!(f, "internal: {m}"),
             AppError::Database(m) => write!(f, "database: {m}"),
             AppError::Canceled => write!(f, "canceled"),
             AppError::Timeout => write!(f, "timeout"),
@@ -57,12 +51,9 @@ impl IntoResponse for AppError {
         let (status, code) = match &self {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::Database(_) => (StatusCode::BAD_REQUEST, "database"),
             AppError::Canceled => (StatusCode::REQUEST_TIMEOUT, "canceled"),
             AppError::Timeout => (StatusCode::REQUEST_TIMEOUT, "timeout"),
-            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
         let body = Json(json!({
             "ok": false,

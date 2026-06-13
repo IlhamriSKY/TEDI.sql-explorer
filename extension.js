@@ -4255,7 +4255,7 @@ const STYLES_CSS = `
 
 .tsql-main { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
 .tsql-main--empty { align-items: center; justify-content: center; }
-.tsql-toolbar { display: flex; gap: 6px; padding: 6px 10px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.tsql-toolbar { display: flex; gap: 5px; padding: 4px 8px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
 /* Buttons match the host's <Button variant="ghost"> chrome: 1 px
    transparent border at rest so the hover bg paints as a clean box
    without an outline ring, only --ring shows on focus-visible.
@@ -4278,7 +4278,7 @@ const STYLES_CSS = `
 
 /* Code-editor container: hosts a CodeMirror EditorView mounted by
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
-.tsql-editor { width: 100%; min-height: 80px; overflow: hidden; display: flex; flex-direction: column; flex: 0 0 var(--tsql-editor-h, 45%); }
+.tsql-editor { width: 100%; min-height: 64px; overflow: hidden; display: flex; flex-direction: column; flex: 0 0 var(--tsql-editor-h, 38%); }
 .tsql-editor .cm-editor { height: 100%; flex: 1 1 auto; min-height: 0; }
 .tsql-editor .cm-editor.cm-focused { outline: none; }
 /* Vertical splitter between the query editor and the results pane.
@@ -4296,20 +4296,20 @@ const STYLES_CSS = `
 .tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 24px; height: 4px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
 .tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: color-mix(in srgb, var(--primary, #3b82f6) 50%, transparent); }
 .tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--primary, #3b82f6); }
-.tsql-results { display: flex; flex-direction: column; min-height: 120px; overflow: hidden; flex: 1 1 auto; }
+.tsql-results { display: flex; flex-direction: column; min-height: 96px; overflow: hidden; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
-.tsql-result-tab { padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
+.tsql-result-tab { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
 .tsql-result-tab:hover { color: var(--foreground); }
 .tsql-result-tab.is-active { color: var(--foreground); border-color: var(--primary, #3b82f6); background: var(--accent, rgba(127,127,127,0.08)); }
 .tsql-result-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0; display: flex; flex-direction: column; }
-.tsql-result-meta { padding: 6px 12px; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tsql-result-meta { padding: 4px 10px; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 /* Heidi-style result-grid toolbar: row-count + duration on the left,
    client-side search input + page navigation on the right. Wraps under
    the search on narrow widths so the controls never overlap.
    .tsql-meta--sticky pins the bar to the top of the scrolling result
    body so the user keeps the controls in view while scrolling. The
    1 px bottom divider matches the project's standard hairline. */
-.tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 6px 12px 6px 12px; row-gap: 6px; }
+.tsql-grid-meta { justify-content: space-between; flex-wrap: wrap; gap: 5px 8px; padding: 4px 10px; row-gap: 4px; }
 .tsql-grid-meta-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .tsql-grid-meta-right { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .tsql-meta--sticky {
@@ -4333,7 +4333,7 @@ const STYLES_CSS = `
    to its content (auto-height CodeMirror) and caps tall multi-statement
    SQL with an internal scroll; the 1 px bottom hairline separates it from
    the result grid below. */
-.tsql-sql-editor { flex: 0 0 auto; max-height: 132px; overflow: auto; border-bottom: 1px solid var(--border); background: var(--background); }
+.tsql-sql-editor { flex: 0 0 auto; max-height: 108px; overflow: auto; border-bottom: 1px solid var(--border); background: var(--background); }
 .tsql-sql-editor .cm-editor { height: auto; }
 .tsql-sql-editor .cm-content { padding: 6px 0; }
 /* Divider between the meta/search toolbar and the sticky table header
@@ -4349,7 +4349,7 @@ const STYLES_CSS = `
 .tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
 .tsql-grid-wrap.is-editable { border-top: 0; }
 .tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
-.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; user-select: none; }
+.tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 4px 9px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; user-select: none; }
 /* Sortable header: click cycles unset -> asc -> desc -> unset. The
    arrow span sits at the end of the cell; empty text reserves nothing
    so unsorted headers stay flush. */
@@ -4366,7 +4366,7 @@ const STYLES_CSS = `
 .tsql-input.tsql-grid-search { width: 100%; padding: 4px 26px 4px 10px; font-size: 11px; height: 28px; line-height: 1; box-sizing: border-box; }
 .tsql-select.tsql-grid-colfilter { height: 28px; min-height: 28px; padding: 0 10px; font-size: 11px; max-width: 160px; min-width: 96px; }
 .tsql-select.tsql-grid-colfilter .tsql-select-label { font-weight: normal; }
-.tsql-grid tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.tsql-grid tbody td { padding: 3px 9px; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 /* Zebra stripes use foreground tint at low alpha so dark/light themes
    both get a clean shade pair without leaning into any accent hue. */
 .tsql-grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
@@ -4403,7 +4403,7 @@ const STYLES_CSS = `
 .tsql-cell-input::-webkit-calendar-picker-indicator { filter: invert(0.55); cursor: pointer; }
 .tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
 
-.tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 7px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
+.tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
 .tsql-pager-label { font-size: 11px; color: var(--muted-foreground); min-width: 80px; text-align: center; }
 .tsql-empty { padding: 18px 14px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
 

@@ -2,6 +2,17 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.3.2 (2026-06-13)
+
+- Feat: surface-aware layout. When the host mounts the workbench as a
+  split-pane leaf (next to a terminal / editor / browser) it now renders
+  header-less — the pane frame already supplies the title + drag handle +
+  close — and folds the New-connection / Restart actions into the sidebar
+  head. Reads as a native pane instead of stacking a second header. The
+  workspace-tab layout is unchanged. (Activates only on a TEDI host that
+  supports extension panels in split panes; older hosts always render the
+  tab layout.)
+
 ## 0.3.1 (2026-06-13)
 
 - Style: compact the result grid and query editor so more data fits on

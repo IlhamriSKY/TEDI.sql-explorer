@@ -2,6 +2,15 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.3.1 (2026-06-13)
+
+- Style: compact the result grid and query editor so more data fits on
+  screen. Table rows are denser (cell padding 5px/10px → 3px/9px, header
+  6px/10px → 4px/9px); the toolbar, result-meta, grid-meta and pager bars
+  are tightened; the query editor now defaults to 38% height (was 45%) so
+  results get more room, and the executed-SQL preview caps at 108px (was
+  132px). CSS-only — no behavior change.
+
 ## 0.3.0 (2026-06-13)
 
 - Feat: the left panel is now one unified tree — each connection is a root

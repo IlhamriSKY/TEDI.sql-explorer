@@ -64,6 +64,11 @@ let sidebarWidthPx = 240;
 let sidebarCollapsed = false;
 let sidebarSearch = "";
 const expandedConns = new Set();
+// "tab" (workspace tab) or "pane" (split-pane leaf). Set by the host when it
+// mounts the renderer. In a pane the host frame already supplies a header
+// (title + drag + close), so we drop our own and fold its actions into the
+// sidebar, and the workbench sits flush inside the pane frame.
+let surfaceMode = "tab";
 const state = {
   connections: [], // [{ id, name, kind, host, port, database, user, allow_writes, sslMode, sqliteReadOnly, url? }]
   active: null, // active connection id
@@ -179,10 +184,12 @@ export async function activate(context) {
     runActiveQuery().catch((err) => ctx?.logger?.error?.("run failed", err));
   });
 
-  const disposeRenderer = ctx.registerPanelRenderer(PANEL_ID, (container) => {
+  const disposeRenderer = ctx.registerPanelRenderer(PANEL_ID, (container, paneCtx) => {
     panelRoot = container;
+    surfaceMode = paneCtx?.surface === "pane" ? "pane" : "tab";
     container.replaceChildren();
     container.classList.add("tsql-host");
+    container.classList.toggle("tsql-host--pane", surfaceMode === "pane");
     // Delegated styled-tooltip controller for the whole panel subtree
     // (survives the frequent clearChildren-based rerenders since it binds
     // to the persistent container, not its children).
@@ -648,14 +655,18 @@ function initTooltipLayer(root) {
 // ----------------------------- Top-level render ------------------------------
 
 function renderPanel(container) {
+  const pane = surfaceMode === "pane";
   const root = el("div", { class: "tsql-root" });
-  root.appendChild(renderHeader());
+  // In a pane the host frame already supplies the header (title + drag +
+  // close); only the workspace-tab surface renders our own header.
+  if (!pane) root.appendChild(renderHeader());
   // Body is a flex row: [sidebar] [drag splitter] [editor + results]. The
-  // sidebar holds the unified connection/schema/table tree and can be
-  // resized by dragging the splitter or hidden entirely via the header
-  // toggle, so the workbench stays usable in a narrow split pane.
+  // sidebar holds the unified connection/schema/table tree and can be resized
+  // by dragging the splitter. The collapse toggle lives in our header, so it
+  // only applies on the tab surface; in a pane the sidebar is always shown
+  // (size it via the splitter).
   const body = el("div", { class: "tsql-body" });
-  if (!sidebarCollapsed) {
+  if (pane || !sidebarCollapsed) {
     body.style.setProperty("--tsql-sidebar-w", `${sidebarWidthPx}px`);
     body.appendChild(renderSidebar());
     body.appendChild(makeSidebarSplitter(body));
@@ -942,7 +953,20 @@ function renderSidebar() {
       applyTreeFilter(aside, val);
     },
   });
-  head.appendChild(searchWrap);
+  if (surfaceMode === "pane") {
+    // No workbench header in a pane, so the new-connection + restart-sidecar
+    // actions ride in the sidebar head next to the search box.
+    const row = el(
+      "div",
+      { class: "tsql-sidebar-head-row" },
+      searchWrap,
+      iconButton("Add01Icon", "New connection", () => openConnectionDialog()),
+      iconButton("Refresh01Icon", "Restart sidecar", restartSidecarFlow),
+    );
+    head.appendChild(row);
+  } else {
+    head.appendChild(searchWrap);
+  }
   aside.appendChild(head);
 
   const list = el("ul", { class: "tsql-tree-list" });
@@ -4190,6 +4214,11 @@ const STYLES_CSS = `
    to the input's right edge regardless of variant. */
 .tsql-search-wrap { position: relative; display: block; box-sizing: border-box; }
 .tsql-search-wrap--tree { width: calc(100% - 16px); margin: 6px 8px 0; }
+/* Pane surface: no workbench header, so the sidebar head is a row holding the
+   search box (grows) + the new-connection / restart actions on the right. */
+.tsql-sidebar-head-row { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; }
+.tsql-sidebar-head-row > .tsql-search-wrap--tree { width: auto; flex: 1 1 auto; margin: 0; }
+.tsql-sidebar-head-row > .tsql-icon-btn { flex: 0 0 auto; width: 26px; height: 26px; }
 .tsql-search-wrap--grid { display: inline-flex; align-items: center; width: 160px; vertical-align: middle; }
 .tsql-search-wrap--grid > .tsql-input.tsql-grid-search { width: 100%; padding-right: 26px; }
 .tsql-search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; padding: 0; margin: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; display: none; align-items: center; justify-content: center; border-radius: var(--radius, 0); box-sizing: border-box; flex: 0 0 auto; z-index: 1; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }

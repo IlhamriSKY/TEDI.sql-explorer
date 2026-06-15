@@ -1,0 +1,9 @@
+# Pin JS source + JSON to LF so line endings stay deterministic across
+# platforms (no autocrlf churn on Windows checkouts). extension.js is the
+# generated bundle (built in CI, not committed); the pin keeps any local build
+# LF too. `src/**/*.js` covers the feature subfolders (dialects/, dom/, …).
+extension.js   text eol=lf
+build.mjs      text eol=lf
+src/*.js       text eol=lf
+src/**/*.js    text eol=lf
+*.json         text eol=lf

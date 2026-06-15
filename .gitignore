@@ -6,6 +6,14 @@
 # Rust build artefacts
 /sidecar-src/target/
 
+# JS build tooling deps (esbuild).
+/node_modules/
+
+# Built bundle — generated from src/ by `node build.mjs`. NOT committed: CI
+# (release.yml) builds it into the release .zip that users install. For local
+# dev (dev-link) run `npm run build` once, or `npm run watch` while editing.
+/extension.js
+
 # Release zip
 dist/
 

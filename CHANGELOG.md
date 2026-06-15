@@ -2,6 +2,73 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.4.2 (2026-06-15)
+
+- Refactor: the `src/` tree is split into focused **feature folders** behind
+  same-named barrels (`dialects/`, `dom/`, `grid/`, `gridedit/`, `query/`,
+  `render/`, `tree/`, `connections/`, `styles/`); **every source file is now
+  ≤ 300 lines** (no "god modules"). Behaviour-preserving (verbatim moves plus
+  one inline-edit dedup). See README → Development for the folder map.
+- Refactor: per-engine differences (quoting, connection URL, TLS, autocomplete
+  vocabulary, labels) now live in a **dialect registry** (`src/dialects/`), so
+  adding a database engine is a one-file change.
+- Build: `extension.js` is **no longer committed** — it is the generated bundle
+  and is built from `src/` by CI (`release.yml`) into the release `.zip` that
+  users install. `build-check.yml` now validates the build instead of diffing a
+  committed bundle. (Reverses 0.4.1's "single committed artifact" note.)
+- No user-facing behaviour change.
+
+## 0.4.1 (2026-06-15)
+
+- Feat: right-click any grid cell to **Copy cell**, **Copy row** (TSV), or
+  **Copy row as INSERT** — works on read-only connections too.
+- Feat: **Structure** view (read-only) showing each column's ordinal, type,
+  nullability, key, default, and extra, from the existing `/columns` data.
+- Feat: grid headers now show each column's **type** + a **PK** badge, with a
+  richer hover tooltip (type · key · nullability · default).
+- Feat: **rows-per-page** selector (10 / 25 / 50 / 100 / 500) on the table grid.
+- Feat: the Insert dialog now uses **typed inputs** per column (boolean / enum
+  dropdowns, date-time pickers, number steppers) with an explicit `(NULL)` /
+  `(default)` choice, matching the inline cell editor.
+- Fix: saved **SQLite** connections broke on reconnect/edit (the file path was
+  read from a host field that defaulted to `127.0.0.1`); the path is now stored
+  and read consistently in `sqlitePath`.
+- Fix: deleting a connection now actually **wipes its keychain credential**
+  (the confirm dialog previously claimed this without doing it); SQLite
+  connections no longer claim a credential they don't store.
+- Fix: a dead sidecar is now detected and **auto-restarted** on the next request
+  instead of failing until the extension is re-enabled.
+- Fix: editing an unchanged `tinyint(1)` boolean no longer fires a spurious
+  no-op UPDATE; integer cell editors are right-aligned like number cells; open
+  dropdown menus no longer leak DOM/listeners on teardown.
+- Refactor: the UI is now authored as small ES modules under `src/` and bundled
+  into `extension.js` with esbuild (`npm run build`). No behavior change — the
+  4.9k-line single file is split into 15 focused modules (see README →
+  Development). The shipped `extension.js` stays a single committed artifact.
+
+## 0.4.0 (2026-06-13)
+
+- Feat: the connection list now lives in the host's left sidebar as a
+  workspace-styled "Databases" section (via the new `ctx.sidebar` API on
+  TEDI >= 0.3.37). Add / refresh / per-row edit / delete and the live
+  connection-status tint are rendered by the host with the same chrome as the
+  Workspaces panel; the section appears only while the extension is enabled.
+  Clicking a connection opens (or focuses) the workbench pane and connects.
+- Feat: the workbench main area is now a compact **[Table | Query]** tab
+  switcher. The Table tab is the editable data grid for the open table; the
+  Query tab is the SQL editor + results. Opening a table from the tree jumps to
+  the Table tab; running a query jumps to the Query tab. Only the active view is
+  mounted, so the CodeMirror editor and the table grid never stack — it fits a
+  narrow split pane. Switching views rebuilds only the main area, so the schema
+  tree keeps its expansion.
+- Change: the in-pane tree is now scoped to the **active** connection (its
+  databases → schemas → tables) instead of listing every connection — the
+  connection list moved to the host sidebar. Opening the workbench no longer
+  collapses the left sidebar (that is where connections live now).
+- Change: requires TEDI host >= 0.3.37 (`ctx.sidebar`). Adds the
+  `sidebar:write` permission. On older hosts the sidebar section is skipped
+  (guarded); the workbench still opens from the header button / `Mod+Alt+D`.
+
 ## 0.3.2 (2026-06-13)
 
 - Feat: surface-aware layout. When the host mounts the workbench as a

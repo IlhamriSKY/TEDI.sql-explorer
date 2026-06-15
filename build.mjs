@@ -8,8 +8,9 @@
  *   node build.mjs            # one-shot build → extension.js
  *   node build.mjs --watch    # rebuild on every src/ change (dev)
  *
- * The output is intentionally NOT minified: extension.js is committed, so a
- * readable, diff-able bundle keeps reviews and `git blame` meaningful.
+ * The output is intentionally NOT minified: extension.js is the artifact users
+ * install (CI bundles it into the release .zip; it is NOT committed), and an
+ * unminified bundle keeps the shipped/installed code readable and debuggable.
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";

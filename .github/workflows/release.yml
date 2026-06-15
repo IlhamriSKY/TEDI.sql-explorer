@@ -103,6 +103,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # extension.js is NOT committed — it's the generated bundle. Build it here
+      # from src/ so the release .zip carries a fresh, in-sync artifact.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build extension.js from src/
+        run: |
+          set -euo pipefail
+          npm ci
+          node build.mjs
+          node --check extension.js
+
       - name: Resolve version
         id: ver
         shell: bash

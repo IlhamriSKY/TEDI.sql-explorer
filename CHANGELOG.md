@@ -2,6 +2,22 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.4.2 (2026-06-15)
+
+- Refactor: the `src/` tree is split into focused **feature folders** behind
+  same-named barrels (`dialects/`, `dom/`, `grid/`, `gridedit/`, `query/`,
+  `render/`, `tree/`, `connections/`, `styles/`); **every source file is now
+  ≤ 300 lines** (no "god modules"). Behaviour-preserving (verbatim moves plus
+  one inline-edit dedup). See README → Development for the folder map.
+- Refactor: per-engine differences (quoting, connection URL, TLS, autocomplete
+  vocabulary, labels) now live in a **dialect registry** (`src/dialects/`), so
+  adding a database engine is a one-file change.
+- Build: `extension.js` is **no longer committed** — it is the generated bundle
+  and is built from `src/` by CI (`release.yml`) into the release `.zip` that
+  users install. `build-check.yml` now validates the build instead of diffing a
+  committed bundle. (Reverses 0.4.1's "single committed artifact" note.)
+- No user-facing behaviour change.
+
 ## 0.4.1 (2026-06-15)
 
 - Feat: right-click any grid cell to **Copy cell**, **Copy row** (TSV), or

@@ -1,23 +1,22 @@
 name: Build check
 
-# Guards against the committed extension.js drifting from src/. The host loads
-# the single committed extension.js (manifest.main), so it MUST equal a fresh
-# `node build.mjs` of the source modules. This job rebuilds and fails if the
-# committed bundle is stale or was hand-edited.
+# extension.js is NOT committed (it's the generated bundle; CI builds it into the
+# release .zip — see release.yml). This job guards the SOURCE: it builds the
+# bundle from src/ and fails if the build breaks or the output isn't valid JS, so
+# a broken src/ can never reach a release tag. (No `git diff` check — there is no
+# committed bundle to drift from.)
 
 on:
   push:
     branches: ["**"]
     paths:
       - "src/**"
-      - "extension.js"
       - "build.mjs"
       - "package.json"
       - "package-lock.json"
   pull_request:
     paths:
       - "src/**"
-      - "extension.js"
       - "build.mjs"
       - "package.json"
       - "package-lock.json"
@@ -33,13 +32,7 @@ jobs:
           node-version: 20
       - name: Install build tooling
         run: npm ci
-      - name: Rebuild extension.js from src/
+      - name: Build extension.js from src/
         run: node build.mjs
-      - name: Fail if the committed bundle is out of date
-        run: |
-          if ! git diff --exit-code -- extension.js; then
-            echo "::error::extension.js is out of sync with src/. Run \`npm run build\` and commit the result."
-            exit 1
-          fi
-      - name: Syntax check
+      - name: Syntax check the built bundle
         run: node --check extension.js

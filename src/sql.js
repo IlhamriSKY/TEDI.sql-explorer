@@ -1,18 +1,12 @@
 // SQL Explorer — sql module. Bundled into extension.js by build.mjs.
+import { getDialect, quoteIdent } from "./dialects/index.js";
 import { pageSizeFor, state } from "./runtime.js";
 
 
 /** Map a connection's engine kind to the codeEditor language id used for
  *  SQL syntax highlighting. Falls back to generic "sql". */
 export function sqlLanguageForSession(session) {
-  const kind = state.connections.find((c) => c.id === session.connId)?.kind;
-  return kind === "mysql"
-    ? "sql:mysql"
-    : kind === "postgres"
-      ? "sql:postgres"
-      : kind === "sqlite"
-        ? "sql:sqlite"
-        : "sql";
+  return getDialect(sqlConnKind(session.connId)).languageId;
 }
 
 // --- Readable SQL builders for the action strip + edit/delete confirms.
@@ -33,9 +27,7 @@ export function isReadOnly(connId) {
   return false;
 }
 function qid(connId, name) {
-  const s = String(name ?? "");
-  if (sqlConnKind(connId) === "mysql") return "`" + s.replace(/`/g, "``") + "`";
-  return '"' + s.replace(/"/g, '""') + '"';
+  return quoteIdent(getDialect(sqlConnKind(connId)), name);
 }
 function qualName(connId, t) {
   const parts = [];

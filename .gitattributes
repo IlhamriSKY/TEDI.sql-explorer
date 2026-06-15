@@ -1,0 +1,8 @@
+# The build-check CI guard diffs the committed extension.js against a fresh
+# esbuild output, which is always LF. Pin the bundle + JS source to LF so the
+# comparison is deterministic on every platform (no autocrlf churn making the
+# guard flag spurious drift on Windows checkouts).
+extension.js   text eol=lf
+build.mjs      text eol=lf
+src/*.js       text eol=lf
+*.json         text eol=lf

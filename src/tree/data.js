@@ -8,7 +8,7 @@ import { connectWithRetry, ensureSession } from "../connections.js";
 import { state } from "../runtime.js";
 import { ensureSidecar, fetchJson } from "../sidecar.js";
 
-export const TREE_SEP = "\x1f"; // unit separator; never appears in real identifiers
+export const TREE_SEP = "\x01"; // SOH control char; never appears in real identifiers
 /** Expanded node ids. */
 export const treeExpanded = new Set();
 /** Node ids currently loading their children. */

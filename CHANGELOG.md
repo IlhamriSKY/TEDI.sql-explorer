@@ -2,6 +2,15 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## 0.4.3 (2026-06-16)
+
+- Fix: restore the schema-tree node-id separator to its original control char
+  (`\x01`); the 0.4.2 refactor inadvertently changed it to `\x1f`. Behaviour is
+  identical (the separator is internal-only and never appears in identifiers),
+  but this keeps the value faithful to the pre-refactor source.
+- CI: bump `actions/checkout` and `actions/setup-node` to v5 (Node 24 runtime)
+  to clear the Node 20 deprecation warnings.
+
 ## 0.4.2 (2026-06-15)
 
 - Refactor: the `src/` tree is split into focused **feature folders** behind

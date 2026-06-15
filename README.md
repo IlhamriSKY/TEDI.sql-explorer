@@ -11,9 +11,9 @@ terminals.
 </p>
 
 > [!NOTE]
-> Requires TEDI >= 0.3.9 (see `engines.tedi` in manifest.json) for the
-> `ctx.headerBar`, `ctx.tabs.openExtensionTab`, `ctx.ui.codeEditor`, and
-> `ctx.app.setSidebarVisible` host APIs the workbench uses.
+> Requires TEDI >= 0.3.37 (see `engines.tedi` in manifest.json — the
+> authoritative value) for the `ctx.sidebar`, `ctx.tabs.openExtensionTab` /
+> `openExtensionPane`, and `ctx.ui.codeEditor` host APIs the workbench uses.
 
 ---
 
@@ -23,8 +23,8 @@ terminals.
 2. Switch to the **From GitHub** tab.
 3. Paste `IlhamriSKY/TEDI.sql-explorer` and click **Review → Install**.
 
-Click the **Database icon** that appears in the header next to the SSH
-icon, or press `Mod+Alt+D`, to open the workbench tab.
+Open a connection from the **Databases** section in the left sidebar, or
+press `Mod+Alt+D`, to open the workbench.
 
 ## Update
 
@@ -64,9 +64,9 @@ On open:
 
 | Permission | Why |
 | --- | --- |
-| `panels:register` | Mount the workbench renderer as a workspace tab. |
-| `headerbar:write` | Header button next to the SSH icon. |
-| `tabs:open` | Open / focus the workbench tab. |
+| `panels:register` | Mount the workbench renderer as a pane. |
+| `sidebar:write` | The "Databases" connection + schema tree in the left sidebar. |
+| `tabs:open` | Open / focus the workbench pane. |
 | `ui:toast` | Connect / save / export result toasts. |
 | `settings:read` / `settings:write` | Persist saved connections (sans password). |
 | `secrets:read` / `secrets:write` | Read / write passwords in the OS keychain. |
@@ -78,20 +78,58 @@ machine on the LAN can reach it.
 
 ## Development
 
+### Source layout
+
+The extension UI is written as small ES modules under `src/` and **bundled**
+into the single `extension.js` that TEDI loads (the host reads only
+`manifest.main` and imports it as one module, so the shipped extension must be
+a single file). `extension.js` is generated — **edit `src/`, not
+`extension.js`** — and committed so install-from-GitHub needs no build step.
+
+| Module | Responsibility |
+| --- | --- |
+| `runtime.js` | Shared state singletons (`ctx`, `sidecar`, `panelRoot`, …) + app constants + their setters. |
+| `sidecar.js` | Spawn / handshake / auto-respawn the native helper; `fetchJson`. |
+| `dom.js` | DOM toolkit: `el`, icons, inputs, `select`, context menu, tooltip layer. |
+| `dialogs.js` | Centered / confirm modals + read-only SQL preview. |
+| `sql.js` | Identifier quoting + `SELECT/INSERT/UPDATE/DELETE` builders. |
+| `columns.js` | Column-type classification + `/columns` metadata fetch. |
+| `connections.js` | Connection dialog, CRUD, connect-with-retry, secrets. |
+| `tree.js` | Left-sidebar connection → db → schema → table tree. |
+| `render.js` | Panel shell, editor + results layout, action-SQL strip. |
+| `query.js` | Run / cancel queries, multi-statement result rendering. |
+| `grid.js` | Result + table-browse grids, paging, copy, cell display. |
+| `gridedit.js` | Inline cell edit, row insert/delete, Structure view. |
+| `export.js` | CSV / JSON / SQL export dialog. |
+| `styles.js` | Scoped CSS. |
+| `index.js` | `activate` / `deactivate` + wiring. |
+
+### Build
+
 ```bash
 git clone https://github.com/IlhamriSKY/TEDI.sql-explorer.git
 cd TEDI.sql-explorer
 
-# Build the sidecar for your host.
+# UI: install the bundler (esbuild) and build extension.js from src/.
+npm install
+npm run build          # one-shot: src/ → extension.js
+npm run watch          # rebuild on save during development
+
+# Sidecar: build the native helper for your host.
 cd sidecar-src
 cargo build --release
 mkdir -p ../sidecar/<platform>-<arch>      # e.g. windows-x86_64
 cp target/release/tedi-sql-helper* ../sidecar/<platform>-<arch>/
 cd ..
 
-# Package + install via Settings → Extensions → From file:
+# Package + install via Settings → Extensions → From file
+# (ships the BUILT extension.js, not src/):
 zip -r dev.zip manifest.json extension.js logo.png README.md CHANGELOG.md LICENSE sidecar
 ```
+
+> When developing against a TEDI checkout that dev-links this folder
+> (`pnpm tauri:dev:ext`), run `npm run watch` here so `extension.js`
+> rebuilds on every edit, then reload the TEDI window (Ctrl+R).
 
 To cut a release, tag `vX.Y.Z` and push. The CI in
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds

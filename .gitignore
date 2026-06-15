@@ -6,6 +6,10 @@
 # Rust build artefacts
 /sidecar-src/target/
 
+# JS build tooling deps (esbuild). extension.js itself is the BUILT artifact
+# and stays committed so install-from-GitHub works without a build step.
+/node_modules/
+
 # Release zip
 dist/
 

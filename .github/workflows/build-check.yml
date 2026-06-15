@@ -1,0 +1,45 @@
+name: Build check
+
+# Guards against the committed extension.js drifting from src/. The host loads
+# the single committed extension.js (manifest.main), so it MUST equal a fresh
+# `node build.mjs` of the source modules. This job rebuilds and fails if the
+# committed bundle is stale or was hand-edited.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "src/**"
+      - "extension.js"
+      - "build.mjs"
+      - "package.json"
+      - "package-lock.json"
+  pull_request:
+    paths:
+      - "src/**"
+      - "extension.js"
+      - "build.mjs"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install build tooling
+        run: npm ci
+      - name: Rebuild extension.js from src/
+        run: node build.mjs
+      - name: Fail if the committed bundle is out of date
+        run: |
+          if ! git diff --exit-code -- extension.js; then
+            echo "::error::extension.js is out of sync with src/. Run \`npm run build\` and commit the result."
+            exit 1
+          fi
+      - name: Syntax check
+        run: node --check extension.js

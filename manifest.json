@@ -1,7 +1,7 @@
 {
   "id": "tedi.sql-explorer",
   "name": "SQL Explorer",
-  "version": "0.3.2",
+  "version": "0.4.1",
   "description": "Browses and queries MySQL, PostgreSQL, and SQLite databases with schema tree, query editor, inline row edit, and CSV / JSON / SQL export. Toggle with Ctrl+Alt+D.",
   "author": "IlhamRiski - ilhamriski.com",
   "homepage": "https://github.com/IlhamriSKY/TEDI.sql-explorer",
@@ -9,7 +9,7 @@
   "main": "extension.js",
   "permissions": [
     "panels:register",
-    "headerbar:write",
+    "sidebar:write",
     "tabs:open",
     "ui:toast",
     "settings:read",
@@ -50,6 +50,6 @@
     ]
   },
   "engines": {
-    "tedi": ">=0.3.9"
+    "tedi": ">=0.3.37"
   }
 }

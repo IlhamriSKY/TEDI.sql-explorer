@@ -2,7 +2,7 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
-## 0.4.3 (2026-06-16)
+## [0.4.3] - 2026-06-16
 
 - Fix: restore the schema-tree node-id separator to its original control char
   (`\x01`); the 0.4.2 refactor inadvertently changed it to `\x1f`. Behaviour is
@@ -11,7 +11,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - CI: bump `actions/checkout` and `actions/setup-node` to v5 (Node 24 runtime)
   to clear the Node 20 deprecation warnings.
 
-## 0.4.2 (2026-06-15)
+## [0.4.2] - 2026-06-15
 
 - Refactor: the `src/` tree is split into focused **feature folders** behind
   same-named barrels (`dialects/`, `dom/`, `grid/`, `gridedit/`, `query/`,
@@ -27,7 +27,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   committed bundle. (Reverses 0.4.1's "single committed artifact" note.)
 - No user-facing behaviour change.
 
-## 0.4.1 (2026-06-15)
+## [0.4.1] - 2026-06-15
 
 - Feat: right-click any grid cell to **Copy cell**, **Copy row** (TSV), or
   **Copy row as INSERT** — works on read-only connections too.
@@ -55,7 +55,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   4.9k-line single file is split into 15 focused modules (see README →
   Development). The shipped `extension.js` stays a single committed artifact.
 
-## 0.4.0 (2026-06-13)
+## [0.4.0] - 2026-06-13
 
 - Feat: the connection list now lives in the host's left sidebar as a
   workspace-styled "Databases" section (via the new `ctx.sidebar` API on
@@ -78,7 +78,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   `sidebar:write` permission. On older hosts the sidebar section is skipped
   (guarded); the workbench still opens from the header button / `Mod+Alt+D`.
 
-## 0.3.2 (2026-06-13)
+## [0.3.2] - 2026-06-13
 
 - Feat: surface-aware layout. When the host mounts the workbench as a
   split-pane leaf (next to a terminal / editor / browser) it now renders
@@ -89,7 +89,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   supports extension panels in split panes; older hosts always render the
   tab layout.)
 
-## 0.3.1 (2026-06-13)
+## [0.3.1] - 2026-06-13
 
 - Style: compact the result grid and query editor so more data fits on
   screen. Table rows are denser (cell padding 5px/10px → 3px/9px, header
@@ -98,7 +98,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   results get more room, and the executed-SQL preview caps at 108px (was
   132px). CSS-only — no behavior change.
 
-## 0.3.0 (2026-06-13)
+## [0.3.0] - 2026-06-13
 
 - Feat: the left panel is now one unified tree — each connection is a root
   node that expands to its databases → schemas → tables, with a single
@@ -142,7 +142,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - Docs: README minimum-TEDI version corrected to 0.3.9; release-workflow
   comment fixed (logo.png).
 
-## 0.2.30 (2026-05-28)
+## [0.2.30] - 2026-05-28
 
 - Feat: query mode now gets the same tree indication as browsing. When a
   statement runs (or is typed), the table it references is highlighted in
@@ -158,7 +158,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   instead of flashing out to transparent.
 - Verified browse vs query side-by-side with a rendered preview.
 
-## 0.2.29 (2026-05-28)
+## [0.2.29] - 2026-05-28
 
 - Style: tone down the tree active highlight introduced in 0.2.28, which
   made the current database and its open table two loud adjacent blue
@@ -170,7 +170,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - Style: soften the SQL-driven navigation pulse so it no longer flashes a
   saturated blue across the row.
 
-## 0.2.28 (2026-05-28)
+## [0.2.28] - 2026-05-28
 
 - Style: active schema-tree row (selected database / open table) is now a
   cohesive highlighted block instead of a lonely left stripe. The 2 px
@@ -185,7 +185,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - Style: the SQL-driven navigation cue (`.is-target`) also squares its
   corners so its accent bar stays a clean, connected vertical line.
 
-## 0.2.27 (2026-05-28)
+## [0.2.27] - 2026-05-28
 
 - Fix: connection rail subtitle no longer renders dangling separators when
   a connection has no user and no pinned database. The host/database tail
@@ -212,7 +212,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   re-render, statement-tab switch, and deactivate so they no longer leak an
   EditorView per query.
 
-## 0.2.26 (2026-05-28)
+## [0.2.26] - 2026-05-28
 
 - Fix: 0.2.25 activation crash. Two CSS comments inside `STYLES_CSS` wrapped
   the `.tsql-meta--sticky` class name in literal backticks, which closed
@@ -225,7 +225,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   workspace-tab tinting introduced in 0.2.24. Older hosts now refuse to
   install instead of silently running against an incompatible surface.
 
-## 0.2.25 (2026-05-28)
+## [0.2.25] - 2026-05-28
 
 - Feat: inline cell editor now picks a widget that matches the column
   type instead of always rendering a plain text input. Booleans become a
@@ -249,7 +249,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   inherit the host's foreground tint so they don't render as bright OS
   white squares on dark themes.
 
-## 0.2.24 (2026-05-28)
+## [0.2.24] - 2026-05-28
 
 - Feat: workspace tab title now tints with the active connection's
   lifecycle, mirroring the SSH tab palette. Yellow + pulse while
@@ -261,7 +261,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - Style: divider line between the Run / Stop / Export toolbar and the
   query editor so the action row separates cleanly from the buffer.
 
-## 0.2.23 (2026-05-28)
+## [0.2.23] - 2026-05-28
 
 - Feat: query-result grid is paginated client-side (100 rows per page)
   so a SELECT that returns the full row_limit no longer paints
@@ -287,7 +287,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
 - Style: divider between the meta / search toolbar and the sticky
   table header so the two sections read as distinct bands.
 
-## 0.2.22 (2026-05-27)
+## [0.2.22] - 2026-05-27
 
 - Fix: MySQL "USE \`db\`" no longer fails with error 1295 ("not supported
   in the prepared statement protocol") when the user picks a database.
@@ -308,7 +308,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   no longer changes colour, matching the host's static appearance;
   focus / drag still swap line + grip to `--ring` for active feedback.
 
-## 0.2.21 (2026-05-27)
+## [0.2.21] - 2026-05-27
 
 - Fix: 0.2.20 activation crash. The new destructive-button comment in
   STYLES_CSS wrapped `<AlertDialogAction variant="destructive">` in
@@ -318,7 +318,7 @@ All notable changes to the TEDI SQL Explorer extension are documented here.
   informative without breaking the template. Same class of bug as
   v0.2.10 and v0.2.16.
 
-## 0.2.20 (2026-05-27)
+## [0.2.20] - 2026-05-27
 
 Table grid search now runs through the database via `WHERE`, and the
 delete affordances pick up the host's destructive chrome.
@@ -348,7 +348,7 @@ delete affordances pick up the host's destructive chrome.
   `search`, `search_column`, and `search_columns` request fields
   recognised by `/table-rows`.
 
-## 0.2.19 (2026-05-26)
+## [0.2.19] - 2026-05-26
 
 Right sidebar follows the left one closed on workspace open, splitter
 ships a grip kotak, and the schema accordion now tracks the table the
@@ -379,7 +379,7 @@ SQL editor is referencing.
   Quoted identifiers (` `, `"`, `[`) and 1-3 level qualifiers
   (`db.schema.table`) are recognised.
 
-## 0.2.18 (2026-05-26)
+## [0.2.18] - 2026-05-26
 
 - Toolbar buttons (Stop, Export, Row, Reload, Close, etc.) no longer
   paint a visible border at rest. Border is `1px transparent` so the
@@ -390,7 +390,7 @@ SQL editor is referencing.
   drops to transparent so the toolbar's card tint shows through at
   rest instead of fighting it with a slightly-different --background.
 
-## 0.2.17 (2026-05-26)
+## [0.2.17] - 2026-05-26
 
 Free-form queries now resolve unqualified tables, splitter matches the
 host pane handle.
@@ -418,7 +418,7 @@ host pane handle.
   the hit area stays drag-friendly. Hover / drag / focus swap the line
   to --ring so the active state reads the same as TEDI's pane handles.
 
-## 0.2.16 (2026-05-26)
+## [0.2.16] - 2026-05-26
 
 - Fix: 0.2.15 activation crash. A CSS comment inside the STYLES_CSS
   template literal referenced `position: relative` with literal
@@ -427,7 +427,7 @@ host pane handle.
   Replaced with plain text so the comment stays informative without
   breaking the template. Same class of bug as v0.2.10.
 
-## 0.2.15 (2026-05-26)
+## [0.2.15] - 2026-05-26
 
 Form chrome aligned with TEDI host, autocomplete now covers SQL syntax.
 
@@ -467,7 +467,7 @@ Form chrome aligned with TEDI host, autocomplete now covers SQL syntax.
   `type` so SQL data types and tables don't share the same letter in
   the autocomplete popup.
 
-## 0.2.14 (2026-05-26)
+## [0.2.14] - 2026-05-26
 
 Search input + splitter polish.
 
@@ -500,7 +500,7 @@ Search input + splitter polish.
   stays single-row on narrower workbenches; below 420 px the search +
   filter expand to full width and stack instead of wrapping awkwardly.
 
-## 0.2.13 (2026-05-26)
+## [0.2.13] - 2026-05-26
 
 - Accordion-style schema tree: expanding a database now auto-collapses
   every sibling DB so only one is open at a time. Schemas inside the
@@ -519,7 +519,7 @@ Search input + splitter polish.
   hook (`ctx.ui.codeEditor` completions option); older hosts ignore it
   silently so the extension still loads.
 
-## 0.2.12 (2026-05-26)
+## [0.2.12] - 2026-05-26
 
 Workbench layout polish.
 
@@ -547,7 +547,7 @@ Workbench layout polish.
   switching connections (or remounting the panel) keeps the user's
   preferred split.
 
-## 0.2.11 (2026-05-26)
+## [0.2.11] - 2026-05-26
 
 - Search inputs (schema rail "Search databases" + table grid "Search rows")
   now render the clear (X) button as a HugeIcon (Cancel01Icon) overlaid on
@@ -558,7 +558,7 @@ Workbench layout polish.
   while the input is empty and appears the moment the user types one
   character; clicking it empties the input and refocuses for fresh input.
 
-## 0.2.10 (2026-05-26)
+## [0.2.10] - 2026-05-26
 
 Hotfix: the extension failed to activate in 0.2.9 with
 `SyntaxError: Invalid left-hand side expression in postfix operation`.
@@ -571,7 +571,7 @@ SQL Explorer tab never opened, and no toast surfaced because activation
 threw before any setItem call. Replaced the inline-code styling with
 plain quotes/dashes; behaviour is otherwise identical to 0.2.9.
 
-## 0.2.9 (2026-05-26)
+## [0.2.9] - 2026-05-26
 
 UI polish around connection editor, schema tree, and the row grid.
 
@@ -600,7 +600,7 @@ UI polish around connection editor, schema tree, and the row grid.
   doesn't widen the sidecar API surface). State persists across page
   changes / reloads / sort flips.
 
-## 0.2.8 (2026-05-26)
+## [0.2.8] - 2026-05-26
 
 Identifier handling + UI polish.
 
@@ -621,7 +621,7 @@ Identifier handling + UI polish.
 - Sidecar refactor: `edit.rs` / `export.rs` / `schema.rs` reshuffled
   around the new identifier-quoting path.
 
-## 0.2.5 (2026-05-26)
+## [0.2.5] - 2026-05-26
 
 Dropdowns + brand marks now match the host's Settings dialog style.
 
@@ -639,7 +639,7 @@ Dropdowns + brand marks now match the host's Settings dialog style.
 - Brand marks refined: cleaner silhouettes, sharper eye / wave
   details, brighter on the kind-coloured background.
 
-## 0.2.4 (2026-05-25)
+## [0.2.4] - 2026-05-25
 
 CRUD audit pass + query editor parity with the host code editor.
 
@@ -667,7 +667,7 @@ CRUD audit pass + query editor parity with the host code editor.
     flag with destructive-statement typed confirmation.
 - Requires TEDI >= 0.2.26 for `ctx.ui.codeEditor`.
 
-## 0.2.3 (2026-05-25)
+## [0.2.3] - 2026-05-25
 
 Layout, badges, and responsive polish.
 
@@ -692,7 +692,7 @@ Layout, badges, and responsive polish.
   transitions.
 - Requires TEDI >= 0.2.26 for `ctx.app.setSidebarVisible`.
 
-## 0.2.2 (2026-05-25)
+## [0.2.2] - 2026-05-25
 
 Header button + toolbar polish.
 
@@ -705,7 +705,7 @@ Header button + toolbar polish.
   before because anonymous text nodes are not flex children.
 - Toast on delete-row success.
 
-## 0.2.1 (2026-05-25)
+## [0.2.1] - 2026-05-25
 
 UI polish, all icons now HugeIcons (matched TEDI core chrome).
 
@@ -723,7 +723,7 @@ UI polish, all icons now HugeIcons (matched TEDI core chrome).
   export, and sidecar restart now surface a green toast on success.
 - Requires TEDI >= 0.2.26 for the new `ctx.ui.icon` host API.
 
-## 0.2.0 (2026-05-25)
+## [0.2.0] - 2026-05-25
 
 UI surface change. The workbench moved off the right-panel slot into a
 full workspace tab, and the toggle moved off the status bar into a
@@ -739,7 +739,7 @@ header button next to the SSH icon.
 - Requires TEDI >= 0.2.26 for the new `ctx.headerBar` and
   `ctx.tabs.openExtensionTab` host APIs.
 
-## 0.1.0 (2026-05-25)
+## [0.1.0] - 2026-05-25
 
 Initial release.
 

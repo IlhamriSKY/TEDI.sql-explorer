@@ -2,6 +2,27 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.4] - 2026-06-17
+
+- Feat: **custom themed date / time / datetime picker** replacing the native
+  WebView2 control, whose calendar popup can't be styled. Square corners, 1px
+  borders, full dark / light support via theme tokens; used by both the inline
+  cell editor and the Insert dialog.
+- Feat: **custom themed boolean / enum dropdown** (the shared `select()` menu)
+  replacing the native `<select>`, so its option list matches every other
+  dropdown in the app in both themes (square, 1px, tick on the selected item).
+- Improve: the **Export** modal now uses the shared centered-dialog chrome, and
+  the **Insert** dialog is a tidy 2-column form with input chrome consistent
+  across all field types.
+- Improve: the confirm-dialog SQL preview is compact (no inner hairline / box
+  border); the **PK** badge is neutral and non-bold (host Badge "secondary"
+  look); the rows-per-page selector moved next to the Insert (`+Row`) button;
+  the result grid fills the available height.
+- Fix: a click-away on an unchanged date / time / datetime cell no longer fires
+  a spurious, precision-dropping UPDATE (the no-op check normalizes the raw
+  server value); NULL / default option sentinels are collision-safe; the themed
+  dropdown dismisses cleanly on Tab.
+
 ## [0.4.3] - 2026-06-16
 
 - Fix: restore the schema-tree node-id separator to its original control char

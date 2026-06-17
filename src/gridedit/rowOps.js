@@ -3,7 +3,7 @@
 // classifier. Bundled into extension.js by build.mjs.
 import { classifyColumnType, ensurePkColumns, inputValueToIso, shortTypeLabel } from "../columns.js";
 import { openCenteredDialog, openConfirmDialog } from "../dialogs.js";
-import { el, input, safeToast } from "../dom.js";
+import { createDatePicker, el, input, safeToast, select } from "../dom.js";
 import { loadTableRows } from "../grid.js";
 import { setActionSql } from "../render.js";
 import { fetchJson } from "../sidecar.js";
@@ -135,37 +135,40 @@ function makeInsertField(col) {
   const enumType = type && typeof type === "object" && type.kind === "enum" ? type : null;
 
   if (type === "boolean" || enumType) {
-    const sel = el("select", { class: "tsql-input" });
-    sel.appendChild(el("option", { attrs: { value: "__default__" }, text: "(default)" }));
-    if (nullable) sel.appendChild(el("option", { attrs: { value: "__null__" }, text: "(NULL)" }));
+    // Custom themed dropdown so the insert dialog matches the connection
+    // dialog's selects (and the grid cell editor) instead of a native <select>.
+    const options = [{ value: "__tsqlx_default__", label: "(default)" }];
+    if (nullable) options.push({ value: "__tsqlx_null__", label: "(NULL)" });
     for (const o of enumType ? enumType.options : ["true", "false"]) {
-      sel.appendChild(el("option", { attrs: { value: o }, text: o }));
+      options.push({ value: o, label: o });
     }
-    sel.value = "__default__";
+    let current = "__tsqlx_default__";
+    const control = select(options, current, (v) => {
+      current = v;
+    });
     const resolve = () => {
-      const v = sel.value;
-      if (v === "__default__") return { include: false };
-      if (v === "__null__") return { include: true, value: null };
+      if (current === "__tsqlx_default__") return { include: false };
+      if (current === "__tsqlx_null__") return { include: true, value: null };
       if (type === "boolean") {
         const isTiny = String(col.data_type ?? "").toLowerCase() === "tinyint";
-        const truthy = v === "true";
+        const truthy = current === "true";
         return { include: true, value: isTiny ? (truthy ? 1 : 0) : truthy };
       }
-      return { include: true, value: v };
+      return { include: true, value: current };
     };
-    return { control: sel, resolve };
+    return { control, resolve };
   }
 
   if (type === "date" || type === "time" || type === "datetime") {
-    const htmlType = type === "date" ? "date" : type === "time" ? "time" : "datetime-local";
-    const inp = el("input", {
-      class: "tsql-input",
-      attrs: { type: htmlType, step: type === "date" ? undefined : "1" },
-    });
+    // Custom themed picker (same square / 1px-border chrome as the rest of the
+    // dialog) instead of the native date control.
+    const picker = createDatePicker({ type, value: "" });
     return {
-      control: inp,
-      resolve: () =>
-        inp.value === "" ? { include: false } : { include: true, value: inputValueToIso(inp.value) },
+      control: picker.wrap,
+      resolve: () => {
+        const v = picker.getValue();
+        return v === "" ? { include: false } : { include: true, value: inputValueToIso(v) };
+      },
     };
   }
 
@@ -213,7 +216,10 @@ export async function openInsertDialog(session) {
     grid.appendChild(
       el(
         "label",
-        { class: "tsql-field is-full" },
+        // Flow in the form's 2-column grid (matches the connection dialog) so a
+        // many-column insert reads as a compact, tidy form instead of one tall
+        // single column.
+        { class: "tsql-field" },
         el(
           "span",
           { class: "tsql-label" },

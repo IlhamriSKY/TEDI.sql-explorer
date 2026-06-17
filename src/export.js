@@ -1,5 +1,5 @@
 // SQL Explorer — export module. Bundled into extension.js by build.mjs.
-import { appendDialogClose } from "./dialogs.js";
+import { openCenteredDialog } from "./dialogs.js";
 import { el, safeToast, select } from "./dom.js";
 import { state } from "./runtime.js";
 import { fetchJson } from "./sidecar.js";
@@ -14,22 +14,12 @@ export async function openExportDialog() {
     safeToast("Nothing to export.", "info");
     return;
   }
-  const overlay = el("div", { class: "tsql-overlay" });
-  const dialog = el("div", { class: "tsql-dialog" });
-  const onKey = (e) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-    }
-  };
-  const close = () => {
-    document.removeEventListener("keydown", onKey, true);
-    overlay.remove();
-  };
-  dialog.appendChild(el("h3", { class: "tsql-dialog-title", text: "Export" }));
-  appendDialogClose(dialog, close);
+  // Shared centered modal (same head + chrome as the connection / insert /
+  // structure dialogs). `compact` keeps a single-field config modal from
+  // inheriting the tall connection-editor min-height.
+  const { body, close } = openCenteredDialog({ title: "Export", width: 420, compact: true });
   let format = "csv";
-  dialog.appendChild(
+  body.appendChild(
     el(
       "div",
       { class: "tsql-form-grid" },
@@ -49,7 +39,7 @@ export async function openExportDialog() {
       ),
     ),
   );
-  dialog.appendChild(
+  body.appendChild(
     el(
       "div",
       { class: "tsql-dialog-actions" },
@@ -110,10 +100,4 @@ export async function openExportDialog() {
       }),
     ),
   );
-  overlay.appendChild(dialog);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) close();
-  });
-  document.addEventListener("keydown", onKey, true);
-  document.body.appendChild(overlay);
 }

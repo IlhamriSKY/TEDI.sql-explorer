@@ -25,14 +25,21 @@ export const CONTROLS_CSS = `
 .tsql-dialog-form .tsql-dialog-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .tsql-dialog-form .tsql-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 16px; }
 .tsql-dialog-form .tsql-dialog-actions { margin-top: auto; padding-top: 8px; }
+/* Compact form modal (e.g. Export): a small config modal shouldn't inherit the
+   tall connection-editor min-height. Sizes to content; head + actions chrome
+   stay identical so it still reads as one modal family. */
+.tsql-dialog-form.tsql-dialog-form--compact { min-height: 0; }
 .tsql-dialog-form .tsql-input, .tsql-dialog-form .tsql-select { height: 34px; min-height: 34px; padding: 4px 12px; font-size: 12px; }
 .tsql-dialog-form .tsql-btn { height: 34px; padding: 0 14px; font-size: 12px; }
 /* Read-only SQL preview inside a confirm dialog (edit/delete). */
 /* Container for the read-only, syntax-highlighted SQL preview in confirm
    dialogs (delete/update). The CodeMirror inside paints the colors; this just
    supplies the bordered, scrollable box. */
-.tsql-dialog-sql { display: block; margin: 0 0 12px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted, rgba(127,127,127,0.12)); max-height: 120px; overflow: auto; }
-.tsql-dialog-sql .tsql-sql-editor { background: transparent; }
+.tsql-dialog-sql { display: block; margin: 0 0 12px; padding: 6px 10px; border: 0; border-radius: var(--radius, 0); background: var(--muted, rgba(127,127,127,0.12)); max-height: 120px; overflow: auto; }
+/* No inner bottom hairline inside the confirm-dialog SQL box (the base
+   .tsql-sql-editor carries one for the grid preview); the box's own border is
+   enough, so the query reads compact. */
+.tsql-dialog-sql .tsql-sql-editor { background: transparent; border-bottom: 0; }
 .tsql-dialog-sql .tsql-sql-editor .cm-editor { background: transparent; font-size: 11px; }
 .tsql-dialog-sql .tsql-sql-editor .cm-scroller { overflow: hidden; line-height: 1.45; }
 .tsql-dialog-sql .tsql-sql-editor .cm-gutters { display: none !important; }
@@ -182,6 +189,47 @@ export const CONTROLS_CSS = `
 .tsql-num-step:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.16))); color: var(--foreground); }
 .tsql-num-step:active { background: var(--accent, rgba(127,127,127,0.24)); }
 .tsql-num-step > svg, .tsql-num-step > * { display: block; pointer-events: none; }
+
+/* ---- Custom date / time / datetime picker (dom/datePicker.js) -------------
+   Replaces the native WebView2 control, whose popup chips/selection are
+   OS-drawn and can't be restyled. Built from the same chrome as the rest of
+   the workbench so it's consistent: SQUARE corners (var(--radius, 0)), 1px
+   var(--border) borders, --popover surface, theme tokens throughout (dark +
+   light). No fixed colors, no border-radius. */
+.tsql-dp { position: relative; display: inline-flex; align-items: stretch; width: 100%; box-sizing: border-box; }
+/* Input inherits the standard .tsql-input chrome (transparent border at rest,
+   --ring on focus) so the datetime fields match the other inputs in the insert
+   dialog instead of carrying an inconsistent solid border. Just reserve room
+   for the trigger and keep tabular figures. */
+.tsql-dp-input { width: 100%; padding-right: 28px; font-variant-numeric: tabular-nums; }
+.tsql-dp-trigger { position: absolute; right: 1px; top: 1px; bottom: 1px; width: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; outline: none; transition: color 0.12s ease; }
+.tsql-dp-trigger:hover { color: var(--foreground); }
+.tsql-dp-trigger > svg, .tsql-dp-trigger > * { display: block; pointer-events: none; }
+/* Popup surface: square + 1px, matching the select/context-menu chrome. */
+.tsql-dp-popup { box-sizing: border-box; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: var(--radius, 0); box-shadow: 0 14px 32px rgba(0,0,0,0.22); padding: 8px; font-size: 12px; }
+.tsql-dp-popup--time { min-width: 152px; }
+.tsql-dp-cal { width: 236px; }
+.tsql-dp-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.tsql-dp-title { font-size: 12px; font-weight: 600; color: var(--foreground); }
+.tsql-dp-nav { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius, 0); background: transparent; color: var(--muted-foreground); cursor: pointer; outline: none; transition: background 0.12s ease, color 0.12s ease; }
+.tsql-dp-nav:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
+.tsql-dp-nav > svg, .tsql-dp-nav > * { display: block; pointer-events: none; }
+.tsql-dp-weekdays, .tsql-dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.tsql-dp-weekdays { margin-bottom: 2px; }
+.tsql-dp-wd { text-align: center; font-size: 10px; font-weight: 600; color: var(--muted-foreground); padding: 2px 0; }
+.tsql-dp-day { box-sizing: border-box; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius, 0); background: transparent; color: var(--foreground); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; outline: none; transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease; }
+.tsql-dp-day.is-blank { visibility: hidden; cursor: default; }
+.tsql-dp-day:hover:not(.is-blank) { background: var(--accent, rgba(127,127,127,0.14)); color: var(--accent-foreground, var(--foreground)); }
+.tsql-dp-day.is-today { border-color: color-mix(in srgb, var(--foreground) 35%, transparent); }
+.tsql-dp-day.is-selected { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: var(--primary, #3b82f6); }
+.tsql-dp-time { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 8px; }
+.tsql-dp-popup--time .tsql-dp-time { margin-top: 0; }
+.tsql-dp-time-field { width: 40px; text-align: center; padding: 4px; height: 28px; border: 1px solid var(--border); border-radius: var(--radius, 0); font-variant-numeric: tabular-nums; }
+.tsql-dp-time-field:focus, .tsql-dp-time-field:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
+.tsql-dp-colon { color: var(--muted-foreground); font-weight: 600; }
+.tsql-dp-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.tsql-dp-foot-right { display: inline-flex; gap: 6px; }
+.tsql-dp-foot-btn { height: 26px; padding: 0 10px; font-size: 11px; }
 
 /* Narrow-width tweaks. The body is a single editor+results column (the tree
    lives in the host sidebar), so only the result-grid toolbar controls shrink

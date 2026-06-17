@@ -26,7 +26,7 @@ export function closeOpenDialogs() {
  * `{ body, close }`; the caller fills `body` with its content. Closes on the X
  * button, a backdrop click, or Escape. Only one form modal at a time.
  */
-export function openCenteredDialog({ title, width = 520 }) {
+export function openCenteredDialog({ title, width = 520, compact = false }) {
   // Mount on document.body (not panelRoot) so the modal centers on the whole
   // window and is never clipped by a short split-pane — matches host modals.
   const host = document.body;
@@ -35,7 +35,12 @@ export function openCenteredDialog({ title, width = 520 }) {
   }
   let settled = false;
   const overlay = el("div", { class: "tsql-overlay", attrs: { "data-form-modal": "1" } });
-  const dialog = el("div", { class: "tsql-dialog tsql-dialog-form" });
+  // `compact` sizes the card to its content (small config modals like Export)
+  // instead of the tall 460px min-height the connection editor wants, while
+  // keeping the identical head + body + actions chrome.
+  const dialog = el("div", {
+    class: `tsql-dialog tsql-dialog-form${compact ? " tsql-dialog-form--compact" : ""}`,
+  });
   dialog.style.width = `${width}px`;
   dialog.addEventListener("click", (e) => e.stopPropagation());
 
@@ -57,6 +62,9 @@ export function openCenteredDialog({ title, width = 520 }) {
     if (settled) return;
     settled = true;
     document.removeEventListener("keydown", onKey, true);
+    // Force-close any tracked body-mounted popup (e.g. an open date picker) so
+    // dismissing the modal by Escape / X / backdrop can't orphan it.
+    closeAllSelectMenus();
     overlay.remove();
   };
   const onKey = (e) => {

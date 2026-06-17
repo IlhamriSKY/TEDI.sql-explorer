@@ -1,7 +1,7 @@
 // SQL Explorer — gridedit/typedEditor: the shared typed inline-edit widget.
 // Bundled into extension.js by build.mjs.
 import { inputValueToIso, isoToInputValue } from "../columns.js";
-import { clearChildren, el, makeNumberWrap } from "../dom.js";
+import { clearChildren, createDatePicker, el, makeNumberWrap, select, trackFloatingMenu } from "../dom.js";
 
 /**
  * Build, mount, focus, and wire the typed inline-edit widget for one grid
@@ -24,70 +24,138 @@ export function mountTypedEditor(td, { type, nullable, original, colInfo, commit
   const enumType =
     type && typeof type === "object" && type.kind === "enum" ? type : null;
 
-  if (type === "boolean") {
-    editor = el("select", { class: "tsql-input tsql-cell-input tsql-cell-input--bool" });
-    const opts = [];
-    if (nullable) opts.push({ value: "__null__", label: "(NULL)" });
-    opts.push({ value: "true", label: "true" }, { value: "false", label: "false" });
-    for (const o of opts) {
-      const node = el("option", { attrs: { value: o.value }, text: o.label });
-      editor.appendChild(node);
+  if (type === "boolean" || enumType) {
+    // Custom themed dropdown (the same .tsql-select-menu chrome as every other
+    // dropdown in the app) instead of a native <select>, whose option list is
+    // OS-drawn and doesn't match the workbench in dark/light. It owns its own
+    // lifecycle: pick → commit, dismiss (outside-click / Escape / close) →
+    // revert; so it bypasses the shared blur/keydown wiring below.
+    const options = [];
+    if (nullable) options.push({ value: "__tsqlx_null__", label: "(NULL)" });
+    if (type === "boolean") {
+      options.push({ value: "true", label: "true" }, { value: "false", label: "false" });
+    } else {
+      for (const opt of enumType.options) options.push({ value: opt, label: opt });
     }
-    // Original may be `true` / `false` / `null` / `0` / `1`.
+    // Original may be `true` / `false` / `null` / `0` / `1` (bool) or a string (enum).
     const initial =
-      original === null || original === undefined
-        ? nullable
-          ? "__null__"
-          : "false"
-        : original === true || original === 1 || original === "1"
-          ? "true"
-          : original === false || original === 0 || original === "0"
-            ? "false"
-            : nullable
-              ? "__null__"
-              : "false";
-    editor.value = initial;
-    resolveValue = () => {
-      const v = editor.value;
-      if (v === "__null__") return null;
-      // MySQL TINYINT(1) round-trips through i64; send 1/0 so the sqlx Number
-      // path binds an integer instead of a bool the driver might reject on a
-      // numeric column.
-      const isTiny = String(colInfo?.data_type ?? "").toLowerCase() === "tinyint";
-      if (v === "true") return isTiny ? 1 : true;
-      return isTiny ? 0 : false;
+      type === "boolean"
+        ? original === null || original === undefined
+          ? nullable
+            ? "__tsqlx_null__"
+            : "false"
+          : original === true || original === 1 || original === "1"
+            ? "true"
+            : original === false || original === 0 || original === "0"
+              ? "false"
+              : nullable
+                ? "__tsqlx_null__"
+                : "false"
+        : original == null
+          ? nullable
+            ? "__tsqlx_null__"
+            : enumType.options[0]
+          : String(original);
+    const resolveSel = (v) => {
+      if (v === "__tsqlx_null__") return null;
+      if (type === "boolean") {
+        // MySQL TINYINT(1) round-trips through i64; send 1/0 so the sqlx Number
+        // path binds an integer instead of a bool the driver might reject.
+        const isTiny = String(colInfo?.data_type ?? "").toLowerCase() === "tinyint";
+        if (v === "true") return isTiny ? 1 : true;
+        return isTiny ? 0 : false;
+      }
+      return v;
     };
-    // For dropdowns, commit on change so the user doesn't have to tab out.
-    editor.addEventListener("change", () => {
-      committedOnChange = true;
-      commit(resolveValue());
+    let done = false;
+    const trigger = select(
+      options,
+      initial,
+      (v) => {
+        if (done) return;
+        done = true;
+        commit(resolveSel(v));
+      },
+      {
+        className: "tsql-cell-select",
+        onDismiss: () => {
+          if (done) return;
+          done = true;
+          cancel();
+        },
+      },
+    );
+    clearChildren(td);
+    td.appendChild(trigger);
+    // Auto-open so the cell behaves like a single click-to-pick editor (the
+    // double-click that started the edit already settled).
+    requestAnimationFrame(() => {
+      try {
+        trigger.click();
+      } catch {
+        // ignore
+      }
     });
-  } else if (enumType) {
-    editor = el("select", { class: "tsql-input tsql-cell-input tsql-cell-input--enum" });
-    if (nullable) {
-      editor.appendChild(el("option", { attrs: { value: "__null__" }, text: "(NULL)" }));
-    }
-    for (const opt of enumType.options) {
-      editor.appendChild(el("option", { attrs: { value: opt }, text: opt }));
-    }
-    editor.value = original == null ? (nullable ? "__null__" : enumType.options[0]) : String(original);
-    resolveValue = () => {
-      const v = editor.value;
-      return v === "__null__" ? null : v;
-    };
-    editor.addEventListener("change", () => {
-      committedOnChange = true;
-      commit(resolveValue());
-    });
+    return;
   } else if (type === "date" || type === "time" || type === "datetime") {
-    const htmlType =
-      type === "date" ? "date" : type === "time" ? "time" : "datetime-local";
-    editor = el("input", {
-      class: `tsql-input tsql-cell-input tsql-cell-input--${type}`,
-      attrs: { type: htmlType, step: type === "date" ? undefined : "1" },
+    // Custom themed picker — replaces the native control whose popup can't be
+    // restyled. It owns its own commit/cancel lifecycle (Apply / day-click /
+    // Enter / click-away → commit, Escape → cancel), so it bypasses the shared
+    // blur/keydown wiring below.
+    let docArmed = false;
+    let untrackDoc = null;
+    const onDocDown = (e) => {
+      if (picker.contains(e.target)) return;
+      teardownDoc();
+      commit(inputValueToIso(picker.getValue()));
+    };
+    // Removes the click-away listener. Also registered with the floating-menu
+    // registry so a mid-edit grid re-render (closeAllSelectMenus) drops it
+    // instead of leaving a stale listener that would fire on a later click.
+    const teardownDoc = () => {
+      if (untrackDoc) {
+        try { untrackDoc(); } catch { /* ignore */ }
+        untrackDoc = null;
+      }
+      if (!docArmed) return;
+      document.removeEventListener("mousedown", onDocDown, true);
+      docArmed = false;
+    };
+    const picker = createDatePicker({
+      type,
+      value: isoToInputValue(type, original),
+      onCommit: (v) => {
+        teardownDoc();
+        commit(inputValueToIso(v));
+      },
+      onCancel: () => {
+        teardownDoc();
+        cancel();
+      },
     });
-    editor.value = isoToInputValue(type, original);
-    resolveValue = () => inputValueToIso(editor.value);
+    // Tab / programmatic focus leaving the widget commits too — the date branch
+    // returns before the shared blur wiring, so without this a keyboard-only
+    // exit would never commit and would leave the click-away listener armed.
+    // Deferred so focus moving INTO the body-mounted popup (a day button or an
+    // HH/MM/SS field) is not treated as leaving.
+    picker.wrap.addEventListener("focusout", () => {
+      setTimeout(() => {
+        if (!docArmed) return;
+        if (picker.contains(document.activeElement)) return;
+        teardownDoc();
+        commit(inputValueToIso(picker.getValue()));
+      }, 0);
+    });
+    clearChildren(td);
+    td.appendChild(picker.wrap);
+    picker.focus();
+    picker.openPopup();
+    requestAnimationFrame(() => {
+      document.addEventListener("mousedown", onDocDown, true);
+      docArmed = true;
+      untrackDoc = trackFloatingMenu(teardownDoc);
+    });
+    return;
   } else if (type === "integer" || type === "number") {
     editor = el("input", {
       class: `tsql-input tsql-cell-input tsql-cell-input--${type}`,

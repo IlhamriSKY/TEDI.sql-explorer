@@ -8,7 +8,14 @@
 // saved flash, revert on cancel/error — is identical and lives once in
 // `editCell()`; the entry points are thin adapters that fill in those three
 // differences.
-import { classifyColumnType, deepEqual, ensurePkColumns, isBytesCell } from "../columns.js";
+import {
+  classifyColumnType,
+  deepEqual,
+  ensurePkColumns,
+  inputValueToIso,
+  isBytesCell,
+  isoToInputValue,
+} from "../columns.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { safeToast, setTooltipAttr } from "../dom.js";
 import { cellTooltip, renderCellContent } from "../grid.js";
@@ -49,7 +56,16 @@ function editCell(td, spec) {
   };
 
   const commit = async (next) => {
-    if (deepEqual(next, original)) {
+    // For date/time/datetime the picker yields a normalized input-format string
+    // ("YYYY-MM-DD[THH:MM:SS]" / "HH:MM:SS") while `original` is the raw server
+    // value, which may carry a TZ suffix, a space separator, or fractional
+    // seconds. Compare against the normalized original so an untouched cell
+    // doesn't fire a spurious, precision-dropping UPDATE on mere click-away.
+    const baseline =
+      type === "date" || type === "time" || type === "datetime"
+        ? inputValueToIso(isoToInputValue(type, original))
+        : original;
+    if (deepEqual(next, baseline)) {
       revert();
       return;
     }

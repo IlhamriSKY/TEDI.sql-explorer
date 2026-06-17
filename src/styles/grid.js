@@ -20,7 +20,10 @@ export const GRID_CSS = `
 /* Two-line header: name row (+ PK badge + sort arrow) over a muted type. */
 .tsql-th-top { display: flex; align-items: center; gap: 5px; }
 .tsql-th-name { overflow: hidden; text-overflow: ellipsis; }
-.tsql-th-pk { flex-shrink: 0; font-size: 8.5px; font-weight: 700; letter-spacing: 0.04em; line-height: 1; padding: 1px 3px; border-radius: var(--radius, 0); color: var(--primary, #3b82f6); border: 1px solid color-mix(in srgb, var(--primary, #3b82f6) 45%, transparent); }
+/* PK badge: matches the host's Badge "secondary" variant (the same neutral,
+   non-bold chrome as the read-only pill .tsql-ro-pill) — keeps the grid's
+   monochromatic palette instead of a bold brand-blue outline. */
+.tsql-th-pk { flex-shrink: 0; font-size: 9px; font-weight: 500; letter-spacing: 0.02em; line-height: 1; padding: 2px 5px; border-radius: var(--radius, 0); color: var(--secondary-foreground, var(--foreground)); background: var(--secondary, var(--muted, rgba(127,127,127,0.18))); border: 1px solid transparent; }
 .tsql-th-type { display: block; margin-top: 2px; font-size: 9.5px; font-weight: 400; color: var(--muted-foreground); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; }
 /* Toolbar search + column-filter controls. Sit ahead of the action
    buttons; widths are compact so the toolbar stays single-row on
@@ -42,7 +45,7 @@ export const GRID_CSS = `
 .tsql-cell-bool { color: var(--foreground); font-weight: 600; }
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
 .tsql-grid-actions-col { width: 30px; }
-.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--background); color: var(--foreground); font-family: inherit; outline: none; box-sizing: border-box; }
+.tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: var(--radius, 0); background: var(--background); color: var(--foreground); font-family: inherit; outline: none; box-sizing: border-box; }
 /* Typed cell editors: same chrome as the text input above, but with a
    couple of variant-specific tweaks. They all sit flush in the table cell
    so the row height stays consistent with the read-only grid. */
@@ -63,15 +66,31 @@ export const GRID_CSS = `
 .tsql-cell-input.tsql-cell-input--number,
 .tsql-cell-input.tsql-cell-input--integer { text-align: right; font-variant-numeric: tabular-nums; }
 .tsql-cell-input.tsql-cell-input--json { width: 100%; min-height: 60px; max-height: 180px; padding: 4px 8px; resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); white-space: pre; }
-/* Calendar / clock indicator inherits the host's foreground colour so it
-   doesn't render as a bright OS-default white square on dark themes. */
-.tsql-cell-input::-webkit-calendar-picker-indicator { filter: invert(0.55); cursor: pointer; }
+/* Native date/time pickers follow the app theme. TEDI's ThemeProvider sets
+   html.dark / html.light on the root (but no color-scheme), which is why the
+   native calendar popup + picker indicator used to render as a foreign light
+   control on dark themes. Setting color-scheme per theme makes the browser
+   paint the popup AND the indicator glyph in the matching mode, so the picker
+   reads correctly in both dark and light without the old fixed invert() hack.
+   Covers the inline cell editors (.tsql-cell-input--*) and the insert-dialog
+   inputs (.tsql-input[type=...]). */
+html.dark .tsql-cell-input--date, html.dark .tsql-cell-input--time, html.dark .tsql-cell-input--datetime,
+html.dark .tsql-input[type="date"], html.dark .tsql-input[type="time"], html.dark .tsql-input[type="datetime-local"] { color-scheme: dark; }
+html.light .tsql-cell-input--date, html.light .tsql-cell-input--time, html.light .tsql-cell-input--datetime,
+html.light .tsql-input[type="date"], html.light .tsql-input[type="time"], html.light .tsql-input[type="datetime-local"] { color-scheme: light; }
+.tsql-cell-input::-webkit-calendar-picker-indicator,
+.tsql-input::-webkit-calendar-picker-indicator { cursor: pointer; }
 .tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
+/* Boolean / enum cell editor: the custom themed dropdown (.tsql-select) trigger
+   fills the cell and stays compact, matching the other inline editors while
+   opening the same .tsql-select-menu the rest of the app uses. */
+.tsql-select.tsql-cell-select { width: 100%; height: auto; min-height: 24px; padding: 3px 8px; font-size: 11px; }
 
 .tsql-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 10px; border-top: 1px solid var(--border); background: var(--card, var(--background)); flex-shrink: 0; }
 .tsql-pager-label { font-size: 11px; color: var(--muted-foreground); min-width: 80px; text-align: center; }
-.tsql-pager-size { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; }
-.tsql-pager-size-label { font-size: 11px; color: var(--muted-foreground); }
-.tsql-pager-size-select { min-width: 64px; }
+/* Rows-per-page selector, now in the table toolbar next to the Row button.
+   Sized like the column-filter so the toolbar controls share one baseline. */
+.tsql-select.tsql-grid-pagesize { height: 28px; min-height: 28px; max-width: 110px; min-width: 88px; font-size: 11px; }
+.tsql-select.tsql-grid-pagesize .tsql-select-label { font-weight: normal; }
 .tsql-empty { padding: 18px 14px; color: var(--muted-foreground); font-size: 12px; text-align: center; }
 `;

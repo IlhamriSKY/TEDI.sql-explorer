@@ -26,6 +26,17 @@ export function closeAllSelectMenus() {
 }
 
 /**
+ * Register an arbitrary floating-popup closer (e.g. the custom date picker)
+ * with the same registry the select/context menus use, so a grid re-render or
+ * pane teardown (`closeAllSelectMenus()`) force-closes it too instead of
+ * orphaning a body-mounted popup. Returns an unregister fn.
+ */
+export function trackFloatingMenu(closeFn) {
+  openSelectMenus.add(closeFn);
+  return () => openSelectMenus.delete(closeFn);
+}
+
+/**
  * Text-only dropdown that mirrors TEDI's Settings DropdownMenu (shadcn /
  * radix-luma): outline trigger with an ArrowDown01Icon caret, rounded
  * popup rendered into `document.body`, Tick02Icon next to the selected
@@ -34,14 +45,20 @@ export function closeAllSelectMenus() {
  *
  * Returns the trigger element. The signature matches the old native-
  * `<select>` helper so we can drop it in without changing callers.
+ *
+ * `opts.className` adds classes to the trigger; `opts.onDismiss` fires when the
+ * menu closes WITHOUT a pick (outside-click / Escape / programmatic close) —
+ * used by the inline cell editor to revert when the user dismisses the dropdown
+ * without choosing. Both are optional, so existing 3-arg callers are unchanged.
  */
-export function select(options, current, onChange) {
+export function select(options, current, onChange, opts = {}) {
   let value = current;
   let menu = null;
   let isOpen = false;
+  let picked = false;
 
   const trigger = el("button", {
-    class: "tsql-select",
+    class: `tsql-select${opts.className ? ` ${opts.className}` : ""}`,
     attrs: {
       type: "button",
       "aria-haspopup": "listbox",
@@ -68,8 +85,14 @@ export function select(options, current, onChange) {
     closeMenu();
   };
   const onDocKeyDown = (event) => {
-    if (event.key === "Escape" && isOpen) {
+    if (!isOpen) return;
+    if (event.key === "Escape") {
       event.preventDefault();
+      closeMenu();
+    } else if (event.key === "Tab") {
+      // Tab dismisses the dropdown (and fires onDismiss so an inline cell editor
+      // reverts) instead of leaving an orphaned open menu; don't preventDefault
+      // so focus still moves naturally.
       closeMenu();
     }
   };
@@ -83,10 +106,20 @@ export function select(options, current, onChange) {
     document.removeEventListener("mousedown", onDocMouseDown, true);
     document.removeEventListener("keydown", onDocKeyDown, true);
     openSelectMenus.delete(closeMenu);
+    // Closed without a pick (outside-click / Escape / forced close) → let the
+    // caller (e.g. an inline cell editor) revert.
+    if (!picked && opts.onDismiss) {
+      try {
+        opts.onDismiss();
+      } catch (err) {
+        ctx?.logger?.error?.("dropdown onDismiss threw", err);
+      }
+    }
   }
 
   function openMenu() {
     if (isOpen) return;
+    picked = false;
     const rect = trigger.getBoundingClientRect();
     menu = el("ul", {
       class: "tsql-select-menu",
@@ -111,6 +144,7 @@ export function select(options, current, onChange) {
       }
       item.addEventListener("click", () => {
         value = opt.value;
+        picked = true;
         if (onChange) {
           try {
             onChange(opt.value);

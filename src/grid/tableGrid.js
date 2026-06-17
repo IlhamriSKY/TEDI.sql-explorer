@@ -90,6 +90,23 @@ export function renderTableGrid(container, session) {
       ),
       (() => {
         const right = el("span", { class: "tsql-grid-meta-right" }, searchWrap, colSelect);
+        // Rows-per-page selector — moved up next to the Insert (Row) button so
+        // every table control sits together in the toolbar; the bottom pager is
+        // left with just Prev / page / Next. Available on read-only connections
+        // too, so it is appended before the (write-only) Row button.
+        const pageSizeSelect = select(
+          PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: `${n} rows` })),
+          String(pageSizeFor(session)),
+          (val) => {
+            const next = Number(val);
+            if (next === pageSizeFor(session)) return;
+            session.pageSize = next;
+            loadTableRows(session, 0);
+          },
+        );
+        pageSizeSelect.classList.add("tsql-grid-pagesize");
+        setTooltipAttr(pageSizeSelect, "Rows per page");
+        right.appendChild(pageSizeSelect);
         // Insert is a write — hide it on read-only connections.
         if (!ro) {
           right.appendChild(
@@ -249,23 +266,7 @@ function renderPager(session, snap) {
   appendIcon(nextBtn, "ArrowRight01Icon", { size: 13 });
   pager.appendChild(nextBtn);
 
-  // Rows-per-page selector. Changing it resets to page 0 and reloads (the
-  // server applies the new LIMIT), so the pager stays consistent.
-  const sizeWrap = el("span", { class: "tsql-pager-size" });
-  sizeWrap.appendChild(el("span", { class: "tsql-pager-size-label", text: "Rows" }));
-  const current = pageSizeFor(session);
-  const sizeSelect = select(
-    PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-    String(current),
-    (val) => {
-      const next = Number(val);
-      if (next === pageSizeFor(session)) return;
-      session.pageSize = next;
-      loadTableRows(session, 0);
-    },
-  );
-  sizeSelect.classList.add("tsql-pager-size-select");
-  sizeWrap.appendChild(sizeSelect);
-  pager.appendChild(sizeWrap);
+  // Rows-per-page lives in the top toolbar now (next to the Row button), so the
+  // bottom pager is just Prev / page / Next.
   return pager;
 }

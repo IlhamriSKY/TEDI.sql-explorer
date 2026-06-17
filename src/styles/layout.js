@@ -82,7 +82,7 @@ export const LAYOUT_CSS = `
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
 /* Compact fixed-basis editor (resizable via the splitter / --tsql-editor-h),
    shrinkable on short panes; the results below take all remaining space. */
-.tsql-editor { width: 100%; min-height: 64px; overflow: hidden; display: flex; flex-direction: column; flex: 0 1 var(--tsql-editor-h, 150px); }
+.tsql-editor { width: 100%; min-height: 64px; overflow: hidden; display: flex; flex-direction: column; flex: 0 1 var(--tsql-editor-h, 128px); }
 .tsql-editor .cm-editor { height: 100%; flex: 1 1 auto; min-height: 0; }
 .tsql-editor .cm-editor.cm-focused { outline: none; }
 /* Vertical splitter between the query editor and the results pane.

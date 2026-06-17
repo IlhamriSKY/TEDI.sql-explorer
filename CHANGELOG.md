@@ -2,6 +2,25 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.5] - 2026-06-17
+
+- Feat: **collapsible query editor** — a Hide / Show editor toggle in the pane
+  toolbar folds the CodeMirror editor (and its drag splitter) away so the result
+  grid gets the full pane height; handy when browsing a table.
+- Feat: **the pane scrolls when it is short** — when a split-pane leaf is
+  shorter than the workbench minimum, the whole pane scrolls vertically so the
+  toolbar, editor, result meta, grid and pager stay reachable instead of being
+  clipped. The grid keeps a usable minimum height (a couple of rows) rather than
+  collapsing, and the result body no longer spawns a confusing second scrollbar.
+  (Pairs with TEDI core >= 0.3.39, which gives a split-pane extension panel a
+  definite height; in a tab the panel already scrolled.)
+- Fix: the themed dropdowns (boolean / enum cell editor, page-size, column
+  filter) now close on scroll, so they no longer float detached from their
+  trigger once the pane can scroll.
+- Chore: drop dead native date / select CSS left over from the custom-widget
+  migration, and extract the query editor + splitter into a `renderQueryEditor`
+  helper.
+
 ## [0.4.4] - 2026-06-17
 
 - Feat: **custom themed date / time / datetime picker** replacing the native

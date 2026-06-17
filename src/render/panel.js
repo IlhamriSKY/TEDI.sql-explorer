@@ -108,6 +108,21 @@ export function renderEditorAndResults(session) {
       onClick: () => openExportDialog(),
     }),
   );
+  // Collapse / restore the query editor — browsing a table is nicer with the
+  // full pane height for the grid. State lives on the (in-memory) session.
+  toolbar.appendChild(
+    textBtn(
+      session.editorHidden ? "Show editor" : "Hide editor",
+      session.editorHidden ? "ArrowDown01Icon" : "ArrowUp01Icon",
+      {
+        title: session.editorHidden ? "Show the query editor" : "Hide the query editor",
+        onClick: () => {
+          session.editorHidden = !session.editorHidden;
+          rerenderMain();
+        },
+      },
+    ),
+  );
   if (isReadOnly(session.connId)) {
     const pill = el("span", {
       class: "tsql-ro-pill",
@@ -119,6 +134,34 @@ export function renderEditorAndResults(session) {
   }
   wrap.appendChild(toolbar);
 
+  // The query editor + its resize splitter render only when not collapsed.
+  if (!session.editorHidden) renderQueryEditor(wrap, session);
+
+  // --- Middle: the SQL a GUI action ran (open table / edit / delete /
+  //     insert). Cleared for editor-run queries — their SQL is in the editor. ---
+  if (session.actionSql) wrap.appendChild(renderActionSqlStrip(session));
+
+  // --- Bottom: results — the browsed table grid OR a free-form query result. ---
+  const results = el("div", { class: "tsql-results", attrs: { "data-results-root": "1" } });
+  if (session.activeTable) {
+    renderTableGrid(results, session);
+  } else if (session.result) {
+    renderQueryResult(results, session);
+  } else {
+    results.appendChild(
+      el("p", { class: "tsql-empty", text: "Open a table from the sidebar, or run a query above." }),
+    );
+  }
+  wrap.appendChild(results);
+  return wrap;
+}
+
+/**
+ * Render the CodeMirror query editor + the drag splitter into the main `wrap`.
+ * Called by renderEditorAndResults only when the editor isn't collapsed (the
+ * Hide-editor toggle); the splitter drives the `--tsql-editor-h` height var.
+ */
+function renderQueryEditor(wrap, session) {
   const editorWrap = el("div", { class: "tsql-editor" });
   wrap.appendChild(editorWrap);
   const language = sqlLanguageForSession(session);
@@ -199,22 +242,4 @@ export function renderEditorAndResults(session) {
     session.editorHeightPx = next;
     e.preventDefault();
   });
-
-  // --- Middle: the SQL a GUI action ran (open table / edit / delete /
-  //     insert). Cleared for editor-run queries — their SQL is in the editor. ---
-  if (session.actionSql) wrap.appendChild(renderActionSqlStrip(session));
-
-  // --- Bottom: results — the browsed table grid OR a free-form query result. ---
-  const results = el("div", { class: "tsql-results", attrs: { "data-results-root": "1" } });
-  if (session.activeTable) {
-    renderTableGrid(results, session);
-  } else if (session.result) {
-    renderQueryResult(results, session);
-  } else {
-    results.appendChild(
-      el("p", { class: "tsql-empty", text: "Open a table from the sidebar, or run a query above." }),
-    );
-  }
-  wrap.appendChild(results);
-  return wrap;
 }

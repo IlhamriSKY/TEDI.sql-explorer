@@ -5,7 +5,10 @@
 export const GRID_CSS = `
 /* Result / table grid: sticky header with a single 1px bottom hairline,
    zebra rows, no horizontal overflow surprise. */
-.tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 0; }
+/* min-height keeps a couple of rows visible even at the smallest pane size, so
+   the grid never collapses to nothing (the .tsql-host pane scroll then reveals
+   the rest); it still grows + scrolls internally on a tall pane. */
+.tsql-grid-wrap { overflow: auto; flex: 1 1 auto; min-height: 72px; }
 .tsql-grid-wrap.is-editable { border-top: 0; }
 .tsql-grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 11px; }
 .tsql-grid thead th { position: sticky; top: 0; background: var(--card, var(--background)); border-bottom: 1px solid var(--border); padding: 4px 9px; text-align: left; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; z-index: 1; user-select: none; }
@@ -46,40 +49,13 @@ export const GRID_CSS = `
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
 .tsql-grid-actions-col { width: 30px; }
 .tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: var(--radius, 0); background: var(--background); color: var(--foreground); font-family: inherit; outline: none; box-sizing: border-box; }
-/* Typed cell editors: same chrome as the text input above, but with a
-   couple of variant-specific tweaks. They all sit flush in the table cell
-   so the row height stays consistent with the read-only grid. */
-.tsql-cell-input.tsql-cell-input--bool,
-.tsql-cell-input.tsql-cell-input--enum {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--foreground) 50%), linear-gradient(135deg, var(--foreground) 50%, transparent 50%);
-  background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50%;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-  padding-right: 22px;
-  cursor: pointer;
-}
-.tsql-cell-input.tsql-cell-input--date,
-.tsql-cell-input.tsql-cell-input--time,
-.tsql-cell-input.tsql-cell-input--datetime { font-variant-numeric: tabular-nums; }
+/* Typed cell editors: same chrome as the text input above, with per-type
+   tweaks. (Boolean/enum use the themed dropdown and date/time the custom
+   picker, both styled elsewhere.) Numbers right-align with tabular figures;
+   JSON gets a resizable mono textarea. */
 .tsql-cell-input.tsql-cell-input--number,
 .tsql-cell-input.tsql-cell-input--integer { text-align: right; font-variant-numeric: tabular-nums; }
 .tsql-cell-input.tsql-cell-input--json { width: 100%; min-height: 60px; max-height: 180px; padding: 4px 8px; resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); white-space: pre; }
-/* Native date/time pickers follow the app theme. TEDI's ThemeProvider sets
-   html.dark / html.light on the root (but no color-scheme), which is why the
-   native calendar popup + picker indicator used to render as a foreign light
-   control on dark themes. Setting color-scheme per theme makes the browser
-   paint the popup AND the indicator glyph in the matching mode, so the picker
-   reads correctly in both dark and light without the old fixed invert() hack.
-   Covers the inline cell editors (.tsql-cell-input--*) and the insert-dialog
-   inputs (.tsql-input[type=...]). */
-html.dark .tsql-cell-input--date, html.dark .tsql-cell-input--time, html.dark .tsql-cell-input--datetime,
-html.dark .tsql-input[type="date"], html.dark .tsql-input[type="time"], html.dark .tsql-input[type="datetime-local"] { color-scheme: dark; }
-html.light .tsql-cell-input--date, html.light .tsql-cell-input--time, html.light .tsql-cell-input--datetime,
-html.light .tsql-input[type="date"], html.light .tsql-input[type="time"], html.light .tsql-input[type="datetime-local"] { color-scheme: light; }
-.tsql-cell-input::-webkit-calendar-picker-indicator,
-.tsql-input::-webkit-calendar-picker-indicator { cursor: pointer; }
 .tsql-cell-saved { background: color-mix(in srgb, var(--tedi-diff-added, #22c55e) 22%, transparent) !important; transition: background 0.6s ease; }
 /* Boolean / enum cell editor: the custom themed dropdown (.tsql-select) trigger
    fills the cell and stays compact, matching the other inline editors while

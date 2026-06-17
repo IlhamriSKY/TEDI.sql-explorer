@@ -4,7 +4,6 @@ import { el, safeToast, select } from "./dom.js";
 import { state } from "./runtime.js";
 import { fetchJson } from "./sidecar.js";
 
-
 // ----------------------------- Export dialog ---------------------------------
 
 export async function openExportDialog() {

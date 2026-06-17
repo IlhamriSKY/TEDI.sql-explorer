@@ -96,6 +96,10 @@ export function select(options, current, onChange, opts = {}) {
       closeMenu();
     }
   };
+  // The pane (.tsql-host) is now scrollable, so a scroll would leave this
+  // body-mounted menu floating at stale coordinates — close it on any scroll
+  // (capture, to catch the pane / grid scroll), matching openContextMenu.
+  const onDocScroll = () => closeMenu();
 
   function closeMenu() {
     if (!menu) return;
@@ -105,6 +109,7 @@ export function select(options, current, onChange, opts = {}) {
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("mousedown", onDocMouseDown, true);
     document.removeEventListener("keydown", onDocKeyDown, true);
+    window.removeEventListener("scroll", onDocScroll, true);
     openSelectMenus.delete(closeMenu);
     // Closed without a pick (outside-click / Escape / forced close) → let the
     // caller (e.g. an inline cell editor) revert.
@@ -166,6 +171,7 @@ export function select(options, current, onChange, opts = {}) {
     requestAnimationFrame(() => {
       document.addEventListener("mousedown", onDocMouseDown, true);
       document.addEventListener("keydown", onDocKeyDown, true);
+      window.addEventListener("scroll", onDocScroll, true);
     });
   }
 

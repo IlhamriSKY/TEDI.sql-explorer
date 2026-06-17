@@ -4,8 +4,13 @@
 // build.mjs. (Concatenated in order by styles.js — keep the cascade stable.)
 
 export const LAYOUT_CSS = `
-.tsql-host { height: 100%; display: flex; flex-direction: column; color: var(--foreground); background: var(--background); font-size: 12px; position: relative; }
-.tsql-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* The pane is the vertical scroll container: when it gets shorter than the
+   workbench's natural minimum height (toolbar + editor + results), it scrolls
+   instead of clipping, so every control stays reachable. */
+.tsql-host { height: 100%; display: flex; flex-direction: column; color: var(--foreground); background: var(--background); font-size: 12px; position: relative; overflow-y: auto; overflow-x: hidden; }
+/* min-height:100% (not height:100%): fills the pane when tall, but grows past
+   it (so .tsql-host scrolls) when the content's natural min exceeds it. */
+.tsql-root { display: flex; flex-direction: column; min-height: 100%; }
 /* Pane surface (split-pane leaf): the host frame already supplies the header
    (title + drag + close) and the connection list lives in the host sidebar, so
    trim paddings for narrow pane widths and keep the workbench compact. */
@@ -16,7 +21,10 @@ export const LAYOUT_CSS = `
 /* Single-column body: the editor + results stack. The connection → database →
    schema → table tree lives in the host's left "Databases" sidebar, so there
    is no in-pane sidebar or splitter here. */
-.tsql-body { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+/* Single-column body: grows to fill the root but never shrinks below its
+   content (flex-shrink 0 + no min-height:0), so the workbench keeps its full
+   height and the pane scrolls rather than squashing it. */
+.tsql-body { display: flex; flex-direction: column; flex: 1 0 auto; min-width: 0; }
 /* Connection root row: bolder label + a primary-tinted icon when active, and
    hover-revealed reload / edit / delete actions in the trailing grid cell. */
 .tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: var(--radius, 0); display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
@@ -46,7 +54,10 @@ export const LAYOUT_CSS = `
 .tsql-search-clear.is-visible { display: inline-flex; }
 .tsql-search-clear:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
 .tsql-search-clear > svg, .tsql-search-clear > * { display: block; flex: 0 0 auto; pointer-events: none; }
-.tsql-main { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+/* No min-height:0 here: the workbench keeps its content-driven minimum height
+   (so the pane scrolls when short) yet still flex-grows to fill a tall pane.
+   .tsql-results / .tsql-grid-wrap keep min-height:0 for the grid's own scroll. */
+.tsql-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
 .tsql-main--empty { align-items: center; justify-content: center; }
 /* Action toolbar (Run / Stop / Export + read-only pill) above the editor. */
 .tsql-toolbar { display: flex; gap: 5px; padding: 4px 8px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
@@ -102,12 +113,19 @@ export const LAYOUT_CSS = `
 .tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--primary, #3b82f6); }
 /* Fills all space below the compact editor (no gap), so the ≤10-row table
    uses the available height instead of scrolling inside a small box. */
-.tsql-results { display: flex; flex-direction: column; min-height: 96px; overflow: hidden; flex: 1 1 auto; }
+/* No overflow:hidden here — it used to clip the bottom (pager/grid) AND cap the
+   results' min-content at 96px, which broke the pane scroll. Without it, the
+   results grow to their real content so the natural min propagates up and
+   .tsql-host scrolls; the grid keeps its OWN internal scroll via .tsql-grid-wrap. */
+.tsql-results { display: flex; flex-direction: column; min-height: 96px; flex: 1 1 auto; }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
 .tsql-result-tab:hover { color: var(--foreground); }
 .tsql-result-tab.is-active { color: var(--foreground); border-color: var(--primary, #3b82f6); background: var(--accent, rgba(127,127,127,0.08)); }
-.tsql-result-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0; display: flex; flex-direction: column; }
+/* Sizes to its content (no min-height:0 / no inner overflow) so a short pane
+   scrolls via .tsql-host instead of spawning a second scrollbar here; the grid
+   keeps its own internal scroll, and the result meta sticks to the pane top. */
+.tsql-result-body { flex: 1 1 auto; padding: 0; display: flex; flex-direction: column; }
 .tsql-result-meta { padding: 4px 10px; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 /* Heidi-style result-grid toolbar: row-count + duration on the left,
    client-side search input + page navigation on the right. Wraps under
@@ -147,6 +165,6 @@ export const LAYOUT_CSS = `
    each other. Border-top is dropped here because .tsql-meta--sticky
    already paints the 1 px hairline on its bottom edge, keeping the
    divider consistent across both result and table grids. */
-.tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.tsql-grid-slot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 72px; }
 .tsql-grid-slot > .tsql-grid-wrap { flex: 1 1 auto; }
 `;

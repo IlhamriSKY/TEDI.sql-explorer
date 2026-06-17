@@ -32,18 +32,11 @@ card. If a new release exists, click **Update** to reinstall in place.
 
 ## How it works
 
-```
-TEDI webview                            Native sidecar
-┌────────────────────────┐  HTTP +    ┌──────────────────────────┐
-│ extension.js (UI)      │  Bearer    │ tedi-sql-helper          │
-│ • workspace tab        │ ◀────────▶ │ • axum on 127.0.0.1:rand │
-│ • schema tree          │  random    │ • per-boot 32-byte token │
-│ • CodeMirror SQL editor│  port      │ • sqlx pool per conn id  │
-│ • result grid          │            └────────────┬─────────────┘
-└────────────────────────┘                         │ TLS + prepared
-        │ ctx.secrets (OS keychain)                ▼
-        ▼                                    MySQL / PG / SQLite
-   credentials store
+```mermaid
+flowchart LR
+    A["extension.js (UI)<br/>workspace tab, schema tree,<br/>CodeMirror SQL editor, result grid"] <-->|"HTTP + Bearer<br/>127.0.0.1:random port"| B["tedi-sql-helper<br/>axum, per-boot 32-byte token,<br/>sqlx pool per conn id"]
+    B -->|"TLS + prepared statements"| C["MySQL / PostgreSQL / SQLite"]
+    A -->|"ctx.secrets"| D["OS keychain (credentials)"]
 ```
 
 On open:

@@ -2,6 +2,13 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.6] - 2026-07-04
+
+- Fix: the pane drag splitter's divider line is now a crisp solid 1px line along
+  the top edge (`var(--border)`) instead of a faint semi-transparent line
+  centered in the 6px handle, so the boundary between the query editor and the
+  result grid reads more clearly. Hover / drag / focus states are unchanged.
+
 ## [0.4.5] - 2026-06-17
 
 - Feat: **collapsible query editor** — a Hide / Show editor toggle in the pane

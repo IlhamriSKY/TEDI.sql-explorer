@@ -107,7 +107,7 @@ export const LAYOUT_CSS = `
    24x4 sharp rectangle (radius-lg=0 in TEDI). NB: comment lives in
    a JS template literal, so backticks are forbidden here. */
 .tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
-.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: color-mix(in srgb, var(--border) 50%, transparent); transition: background 0.12s ease; }
+.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--border); transition: background 0.12s ease; }
 .tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 24px; height: 4px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
 .tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: color-mix(in srgb, var(--primary, #3b82f6) 50%, transparent); }
 .tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--primary, #3b82f6); }

@@ -2,6 +2,12 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.7] - 2026-07-06
+
+- Change: migrated the extension icons from Hugeicons to Lucide (`lucide:` refs
+  resolved by the host), matching the TEDI app icon system after its Lucide
+  migration. Same glyphs, no visual change.
+
 ## [0.4.6] - 2026-07-04
 
 - Fix: the pane drag splitter's divider line is now a crisp solid 1px line along

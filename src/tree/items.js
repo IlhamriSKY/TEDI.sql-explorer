@@ -25,8 +25,8 @@ export function buildTreeItems() {
       expanded: treeExpanded.has(id),
       loading: treeLoadingNodes.has(id),
       actions: [
-        { id: "edit", icon: "hugeicon:PencilEdit01Icon", tooltip: "Edit connection" },
-        { id: "delete", icon: "hugeicon:Delete02Icon", tooltip: "Delete connection", danger: true },
+        { id: "edit", icon: "lucide:Pencil", tooltip: "Edit connection" },
+        { id: "delete", icon: "lucide:Trash2", tooltip: "Delete connection", danger: true },
       ],
     };
     if (item.expanded) item.children = treeChildItems(id, c.id);

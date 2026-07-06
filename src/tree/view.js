@@ -34,10 +34,10 @@ export function syncSidebarSection() {
     ctx.sidebar.setSection({
       id: SIDEBAR_SECTION_ID,
       title: "Databases",
-      icon: "hugeicon:Database01Icon",
+      icon: "lucide:Database",
       headerActions: [
-        { id: "add", icon: "hugeicon:Add01Icon", tooltip: "New connection" },
-        { id: "refresh", icon: "hugeicon:Refresh01Icon", tooltip: "Reload tree" },
+        { id: "add", icon: "lucide:Plus", tooltip: "New connection" },
+        { id: "refresh", icon: "lucide:RefreshCw", tooltip: "Reload tree" },
       ],
       items: buildTreeItems(),
       emptyText: "No connections yet. Click + to add one.",
@@ -131,7 +131,7 @@ export function openWorkbenchTab() {
     const opts = {
       panelId: PANEL_ID,
       title: "SQL Explorer",
-      icon: "hugeicon:Database01Icon",
+      icon: "lucide:Database",
       reuseKey: "main",
     };
     if (typeof tabs?.openExtensionPane === "function") tabs.openExtensionPane(opts);

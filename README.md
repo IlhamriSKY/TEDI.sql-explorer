@@ -1,6 +1,6 @@
 # TEDI SQL Explorer
 
-HeidiSQL-style database workbench for [TEDI](https://github.com/IlhamriSKY/TEDI):
+HeidiSQL-style database workbench for [TEDI](https://tedi.ilhamriski.com/):
 connect to **MySQL / MariaDB**, **PostgreSQL**, or **SQLite**, browse the schema,
 write multi-statement queries with syntax highlight, edit rows inline, and export
 results, all in a workspace tab next to your terminals.

@@ -4,7 +4,7 @@
   "version": "0.4.7",
   "description": "Browses and queries MySQL, PostgreSQL, and SQLite databases with schema tree, query editor, inline row edit, and CSV / JSON / SQL export. Toggle with Ctrl+Alt+D.",
   "author": "IlhamRiski - ilhamriski.com",
-  "homepage": "https://github.com/IlhamriSKY/TEDI.sql-explorer",
+  "homepage": "https://tedi.ilhamriski.com/",
   "icon": "logo.png",
   "main": "extension.js",
   "permissions": [

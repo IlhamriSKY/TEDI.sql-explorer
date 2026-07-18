@@ -2,6 +2,16 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.8] - 2026-07-18
+
+- Fix: the pane drag splitter now reads exactly like every other pane separator
+  in the app. Only the 1px line lights up (primary at 50%) on hover, drag, and
+  focus; the 24x4 grip stays grey (`--tedi-resize-handle`) instead of turning
+  solid blue, and the line sits centered in the 6px handle rather than pinned to
+  its top edge, matching the app's own ResizableHandle.
+- Change: project links point at the TEDI website (https://tedi.ilhamriski.com/)
+  in `manifest.json` and the README.
+
 ## [0.4.7] - 2026-07-06
 
 - Change: migrated the extension icons from Hugeicons to Lucide (`lucide:` refs

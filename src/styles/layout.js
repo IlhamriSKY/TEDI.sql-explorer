@@ -107,10 +107,12 @@ export const LAYOUT_CSS = `
    24x4 sharp rectangle (radius-lg=0 in TEDI). NB: comment lives in
    a JS template literal, so backticks are forbidden here. */
 .tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
-.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--border); transition: background 0.12s ease; }
+.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 1px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
 .tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 24px; height: 4px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
+/* Match the app's ResizableHandle exactly: only the 1px LINE lights to
+   primary/50 on hover/drag/focus; the grip stays --tedi-resize-handle (grey),
+   never solid blue, so the SQL splitter reads the same as every pane separator. */
 .tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: color-mix(in srgb, var(--primary, #3b82f6) 50%, transparent); }
-.tsql-splitter:hover::after, .tsql-splitter.is-dragging::after, .tsql-splitter:focus-visible::after { background: var(--primary, #3b82f6); }
 /* Fills all space below the compact editor (no gap), so the ≤10-row table
    uses the available height instead of scrolling inside a small box. */
 /* No overflow:hidden here — it used to clip the bottom (pager/grid) AND cap the

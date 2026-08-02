@@ -20,13 +20,19 @@
 // callback and the host clears the slot.
 
 
-import { loadSavedConnections } from "./connections.js";
+import { loadSavedConnections, refreshSavedConnections } from "./connections.js";
 import { closeOpenDialogs, disposePreviewEditors } from "./dialogs.js";
 import { initTooltipLayer, safeToast, setTooltipLayer, tooltipLayer } from "./dom.js";
 import { runActiveQuery } from "./query.js";
-import { disposeActionSqlEditor, renderPanel, setTabState } from "./render.js";
+import { disposeActionSqlEditor, renderPanel, rerender, setTabState } from "./render.js";
 import { CMD_RUN, CMD_TOGGLE, PANEL_ID, SIDEBAR_SECTION_ID, ctx, setCtx, setPanelRoot, state } from "./runtime.js";
-import { ensureSidecar, fetchJson, setSidecar, sidecar } from "./sidecar.js";
+import {
+  clearPublishedEndpoint,
+  ensureSidecar,
+  fetchJson,
+  setSidecar,
+  sidecar,
+} from "./sidecar.js";
 import { injectStyles } from "./styles.js";
 import { openWorkbenchTab, syncSidebarSection } from "./tree.js";
 
@@ -84,6 +90,14 @@ export async function activate(context) {
     tooltipLayer?.dispose();
     setTooltipLayer(initTooltipLayer(container));
     renderPanel(container);
+    // Pick up connections the OTHER window saved. Floating the workbench runs a
+    // second copy of this extension, so on dock-back this one's list can be
+    // behind. Guarded against clobbering our own unsaved writes.
+    void refreshSavedConnections().then((changed) => {
+      if (!changed) return;
+      syncSidebarSection();
+      rerender();
+    });
     // Boot the sidecar lazily on first panel mount. If it later dies, fetchJson
     // detects the dropped connection and re-boots it automatically.
     ensureSidecar().catch((err) => {
@@ -140,6 +154,9 @@ export async function deactivate() {
     if (sidecar?.handle != null) {
       await ctx.invoke("shell_bg_kill", { handle: sidecar.handle }).catch(() => {});
     }
+    // Drop the published endpoint too, so the next window probes a dead port
+    // once instead of adopting a helper that is being shut down.
+    await clearPublishedEndpoint();
   } finally {
     setSidecar(null);
     setPanelRoot(null);

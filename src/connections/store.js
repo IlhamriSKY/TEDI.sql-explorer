@@ -14,12 +14,40 @@ export async function loadSavedConnections() {
   }
 }
 
+/** Bumped by every write, so a refresh can tell "the other window saved" from
+ *  "we saved while the read was in flight". */
+let revision = 0;
+
 export async function persistConnections() {
+  revision += 1;
   try {
     await ctx.settings.set("connections", state.connections);
   } catch (err) {
     ctx?.logger?.warn?.("save connections failed", err);
   }
+}
+
+/**
+ * Re-read the saved list. Floating the workbench runs a second copy of this
+ * extension in the float window against the same settings, so the copy that
+ * takes over has to pick up connections the other one added rather than write
+ * its own memory back over them. Returns true when the list actually changed.
+ *
+ * Drops its result if this window wrote while the read was in flight: then the
+ * read is the stale one, not our memory.
+ */
+export async function refreshSavedConnections() {
+  const before = revision;
+  let saved;
+  try {
+    saved = await ctx.settings.get("connections");
+  } catch {
+    return false;
+  }
+  if (revision !== before || !Array.isArray(saved)) return false;
+  if (JSON.stringify(saved) === JSON.stringify(state.connections)) return false;
+  state.connections = saved;
+  return true;
 }
 
 export async function setSecret(connId, password) {

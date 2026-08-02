@@ -31,17 +31,68 @@ function helperPath(installPath, os) {
 export let sidecar = null; // { handle, port, token, baseUrl }
 let bootInFlight = null;
 
+/** Where the running helper's endpoint is published for the OTHER windows.
+ *  `ctx.storage` is a Rust-side store, so a write here is visible to every
+ *  webview immediately, which is what makes the hand-off below work. */
+const ENDPOINT_KEY = "sidecar";
+
 // ----------------------------- Sidecar boot ----------------------------------
 
 export async function ensureSidecar() {
   if (sidecar?.baseUrl) return sidecar;
   if (bootInFlight) return bootInFlight;
   setBootInFlight(
-    bootSidecar().finally(() => {
+    (async () => (await adoptRunningSidecar()) ?? (await bootSidecar()))().finally(() => {
       setBootInFlight(null);
     }),
   );
   return bootInFlight;
+}
+
+/**
+ * Adopt the helper another window already booted, instead of spawning a second
+ * one.
+ *
+ * Floating the workbench runs a SECOND copy of this extension in the float
+ * window (panel renderers are per-webview). Left alone it would spawn its own
+ * helper process: the two windows would then hold separate database sessions,
+ * so a connection opened in the float would be invisible after docking back,
+ * and the float's helper would outlive the window that owned it.
+ *
+ * The probe is what keeps this honest - a record left behind by a previous app
+ * run points at nothing, and then we boot as usual.
+ */
+async function adoptRunningSidecar() {
+  let saved = null;
+  try {
+    saved = await ctx.storage.get(ENDPOINT_KEY);
+  } catch {
+    return null;
+  }
+  if (!saved?.port || !saved?.token) return null;
+  const baseUrl = `http://127.0.0.1:${saved.port}`;
+  try {
+    const res = await fetch(`${baseUrl}/healthz`, {
+      headers: { Authorization: `Bearer ${saved.token}` },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!res.ok) return null;
+  } catch {
+    return null; // nothing listening on that port any more
+  }
+  setSidecar({ handle: saved.handle ?? null, port: saved.port, token: saved.token, baseUrl });
+  ctx?.logger?.info?.(`adopted the running sidecar on ${baseUrl}`);
+  return sidecar;
+}
+
+/** Forget the published endpoint (deactivate). Best effort: a stale record is
+ *  harmless, the probe rejects it. */
+export async function clearPublishedEndpoint() {
+  try {
+    await ctx.storage.delete(ENDPOINT_KEY);
+  } catch {
+    // nothing to clean up
+  }
 }
 
 async function bootSidecar() {
@@ -87,6 +138,13 @@ async function bootSidecar() {
         token: line.token,
         baseUrl: `http://127.0.0.1:${line.port}`,
       });
+      // Publish it so a float window adopts this helper instead of spawning its
+      // own. ponytail: last writer wins, so two windows booting in the same
+      // instant can still leave one orphan - the float only opens on a click
+      // long after the main window is up.
+      void ctx.storage
+        .set(ENDPOINT_KEY, { handle, port: line.port, token: line.token })
+        .catch(() => {});
       ctx?.logger?.info?.(`sidecar ready on ${sidecar.baseUrl}`);
       return sidecar;
     }
@@ -116,6 +174,11 @@ function extractReady(buf) {
 async function respawnSidecar() {
   const dead = sidecar;
   setSidecar(null);
+  // The helper can be SHARED with another window now, so confirm it is really
+  // gone before killing it: one failed fetch (a cancelled request, a hiccup) is
+  // not grounds for taking the other window's sessions down with it.
+  const alive = await adoptRunningSidecar();
+  if (alive) return alive;
   if (dead?.handle != null) {
     await ctx.invoke("shell_bg_kill", { handle: dead.handle }).catch(() => {});
   }

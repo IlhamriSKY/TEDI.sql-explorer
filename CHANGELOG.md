@@ -2,6 +2,16 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.10] - 2026-08-03
+
+- Add: the workbench reopens where you left it. The connection that was open and
+  the SQL in its editor are remembered, so they come back after a restart, and
+  the pane makes that connection live again once the helper is up. That is also
+  what makes floating the pane useful: the float window runs its own copy of the
+  extension, so before this it opened on "no connection selected" instead of the
+  database you popped out. Results are not kept, since a grid belongs to a query
+  run rather than to the workbench.
+
 ## [0.4.9] - 2026-08-03
 
 - Add: the workbench pane can be floated into its own window (needs TEDI 0.4.5).

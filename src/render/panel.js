@@ -1,7 +1,7 @@
 // SQL Explorer — render/panel: the pane shell + the stacked editor/results
 // layout (toolbar, CodeMirror query editor, drag splitter, action-SQL strip,
 // results root). Bundled into extension.js by build.mjs.
-import { ensureSession } from "../connections.js";
+import { ensureSession, saveWorkbenchSession } from "../connections.js";
 import { disposePreviewEditors } from "../dialogs.js";
 import { appendIcon, clearChildren, closeAllSelectMenus, el, textBtn } from "../dom.js";
 import { openExportDialog } from "../export.js";
@@ -11,6 +11,17 @@ import { ctx, panelRoot, state } from "../runtime.js";
 import { isReadOnly, sqlLanguageForSession } from "../sql.js";
 import { disposeActionSqlEditor, renderActionSqlStrip } from "./actionSql.js";
 import { buildSchemaCompletions } from "./completions.js";
+
+/** Trailing-edge debounce for the session write: the editor fires onChange per
+ *  keystroke, and only the last one matters. */
+let sessionTimer = null;
+function persistSessionSoon() {
+  if (sessionTimer) clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => {
+    sessionTimer = null;
+    void saveWorkbenchSession();
+  }, 500);
+}
 
 export function renderPanel(container) {
   // The connection list + schema tree now live in TEDI's left "Databases"
@@ -171,6 +182,9 @@ function renderQueryEditor(wrap, session) {
       value: session.sql ?? "",
       onChange: (v) => {
         session.sql = v;
+        // Debounced: what is in the editor is what a float window (or the next
+        // launch) has to open with, and a keystroke is not a reason to write.
+        persistSessionSoon();
       },
       onCmdEnter: () => runActiveQuery(),
       completions: (prefix) => buildSchemaCompletions(session, prefix),

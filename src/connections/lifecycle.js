@@ -13,6 +13,7 @@ import {
   formToPersistable,
   getSecret,
   persistConnections,
+  saveWorkbenchSession,
   setSecret,
   validateForm,
 } from "./store.js";
@@ -134,6 +135,9 @@ export async function connectWithRetry(connId) {
 
 export async function selectConnection(id) {
   state.active = id;
+  // Which connection is open is the first thing a float window (or the next
+  // launch) needs; without it the popped-out pane opens on "no connection".
+  void saveWorkbenchSession();
   // Lazy connect on selection so the sidecar pool isn't held open for
   // every saved connection on startup.
   await ensureSidecar();

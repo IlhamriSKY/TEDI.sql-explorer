@@ -20,12 +20,27 @@
 // callback and the host clears the slot.
 
 
-import { loadSavedConnections, refreshSavedConnections } from "./connections.js";
+import {
+  loadSavedConnections,
+  refreshSavedConnections,
+  restoreWorkbenchSession,
+  selectConnection,
+} from "./connections.js";
 import { closeOpenDialogs, disposePreviewEditors } from "./dialogs.js";
 import { initTooltipLayer, safeToast, setTooltipLayer, tooltipLayer } from "./dom.js";
 import { runActiveQuery } from "./query.js";
 import { disposeActionSqlEditor, renderPanel, rerender, setTabState } from "./render.js";
-import { CMD_RUN, CMD_TOGGLE, PANEL_ID, SIDEBAR_SECTION_ID, ctx, setCtx, setPanelRoot, state } from "./runtime.js";
+import {
+  CMD_RUN,
+  CMD_TOGGLE,
+  PANEL_ID,
+  SIDEBAR_SECTION_ID,
+  connStatus,
+  ctx,
+  setCtx,
+  setPanelRoot,
+  state,
+} from "./runtime.js";
 import {
   clearPublishedEndpoint,
   ensureSidecar,
@@ -60,6 +75,11 @@ export async function activate(context) {
   }
   injectStyles();
   await loadSavedConnections();
+  // Reopen the connection and the query that were open. In the main window that
+  // is "the workbench survived a restart"; in a float window it is the whole
+  // point, since the float runs a second copy of this extension and would
+  // otherwise open on "no connection selected".
+  await restoreWorkbenchSession();
   // Publish the connection list into the host's left sidebar as a
   // Workspaces-styled section. The section exists only while this extension
   // is active, so it appears/disappears with enable/disable.
@@ -100,10 +120,20 @@ export async function activate(context) {
     });
     // Boot the sidecar lazily on first panel mount. If it later dies, fetchJson
     // detects the dropped connection and re-boots it automatically.
-    ensureSidecar().catch((err) => {
-      ctx?.logger?.error?.("sidecar boot failed", err);
-      safeToast(`SQL helper failed to start: ${err?.message ?? err}`, "error");
-    });
+    ensureSidecar()
+      .then(() => {
+        // Make the restored connection live. A float window has no sidebar to
+        // click, so the pane has to do it, and after a restart this is what
+        // turns "the editor remembers my query" into "I can run it".
+        if (state.active && connStatus[state.active] !== "connected") {
+          return selectConnection(state.active).catch(() => {});
+        }
+        return undefined;
+      })
+      .catch((err) => {
+        ctx?.logger?.error?.("sidecar boot failed", err);
+        safeToast(`SQL helper failed to start: ${err?.message ?? err}`, "error");
+      });
     return () => {
       // Closing the tab tears the renderer down without deactivating the
       // extension; dispose the live CodeMirror views here too (mirrors

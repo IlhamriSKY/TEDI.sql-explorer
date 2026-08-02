@@ -18,6 +18,54 @@ export async function loadSavedConnections() {
  *  "we saved while the read was in flight". */
 let revision = 0;
 
+/**
+ * Persist WHICH connection is open and the SQL in its editor, so the workbench
+ * comes back the way you left it. Floating the pane runs a second copy of this
+ * extension in the float window: without this it opened on "no connection
+ * selected" instead of the database you popped out. The same record restores
+ * the editor after a restart.
+ *
+ * Results are NOT persisted: a grid can be tens of thousands of rows, and it
+ * belongs to a query run rather than to the workbench.
+ */
+export async function saveWorkbenchSession() {
+  try {
+    const sessions = {};
+    for (const [id, s] of Object.entries(state.sessions)) {
+      sessions[id] = { sql: s.sql ?? "", activeTable: s.activeTable ?? null };
+    }
+    await ctx.settings.set("session", { active: state.active ?? null, sessions });
+  } catch (err) {
+    ctx?.logger?.warn?.("save session failed", err);
+  }
+}
+
+/**
+ * Reopen what was open. Restores the per-connection SQL first so the editor
+ * mounts with it, then the active connection, and only for connections that
+ * still exist. Selecting is left to the caller: connecting is a network trip
+ * and belongs to the pane, not to activate().
+ */
+export async function restoreWorkbenchSession() {
+  let saved;
+  try {
+    saved = await ctx.settings.get("session");
+  } catch {
+    return null;
+  }
+  if (!saved || typeof saved !== "object") return null;
+  for (const [id, s] of Object.entries(saved.sessions ?? {})) {
+    if (!state.connections.some((c) => c.id === id)) continue;
+    const session = ensureSession(id);
+    if (typeof s?.sql === "string") session.sql = s.sql;
+    if (s?.activeTable) session.activeTable = s.activeTable;
+  }
+  if (saved.active && state.connections.some((c) => c.id === saved.active)) {
+    state.active = saved.active;
+  }
+  return state.active;
+}
+
 export async function persistConnections() {
   revision += 1;
   try {

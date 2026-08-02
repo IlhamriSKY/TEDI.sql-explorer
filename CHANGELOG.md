@@ -2,6 +2,21 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.4.9] - 2026-08-03
+
+- Add: the workbench pane can be floated into its own window (needs TEDI 0.4.5).
+  The float window runs its own copy of the extension, so two things had to
+  change for it to be one workbench rather than two: the running
+  `tedi-sql-helper` is now shared between windows (its endpoint is published to
+  the extension store and probed on `/healthz` before it is adopted), instead of
+  each window spawning its own helper with its own database sessions and leaving
+  it running after the window closes; and the saved connection list is re-read
+  whenever the panel mounts, so a connection added in the float window is there
+  when you dock back. A read that is in flight while this window saves is
+  dropped rather than allowed to overwrite it.
+- Fix: a single failed request no longer kills a helper that another window is
+  using. The respawn path confirms the process is really gone before killing it.
+
 ## [0.4.8] - 2026-07-18
 
 - Fix: the pane drag splitter now reads exactly like every other pane separator

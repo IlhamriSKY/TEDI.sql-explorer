@@ -26,12 +26,24 @@ export function renderCellContent(value) {
     wrap.appendChild(document.createTextNode(` ${value.size ?? "?"} bytes`));
     return wrap;
   }
+  // A type the helper could not render (a Postgres range, point, tsvector...).
+  // Naming it beats both raw JSON and the NULL this used to show, which was
+  // indistinguishable from the column actually being empty.
+  if (value && typeof value === "object" && value.__type === "unsupported") {
+    const wrap = el("span", { class: "tsql-cell-unsupported" });
+    appendIcon(wrap, "CircleHelpIcon", { size: 12 });
+    wrap.appendChild(document.createTextNode(` ${String(value.pg_type ?? "value").toLowerCase()}`));
+    return wrap;
+  }
   return document.createTextNode(JSON.stringify(value));
 }
 
 export function cellTooltip(value) {
   if (value && typeof value === "object" && value.__type === "bytes") {
     return `Binary value: ${value.size} bytes (double-click to inspect base64)`;
+  }
+  if (value && typeof value === "object" && value.__type === "unsupported") {
+    return `A ${value.pg_type} value is stored here. The helper can't render this type yet — cast it in a query (e.g. SELECT col::text) to read it.`;
   }
   if (value && typeof value === "object") return JSON.stringify(value);
   return value == null ? "NULL" : String(value);

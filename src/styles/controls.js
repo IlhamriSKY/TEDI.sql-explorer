@@ -120,6 +120,19 @@ export const CONTROLS_CSS = `
 .tsql-structure-wrap { max-height: 52vh; border: 1px solid var(--border); border-radius: var(--radius, 0); }
 .tsql-structure-grid td { font-variant-numeric: tabular-nums; }
 .tsql-structure-grid td:first-child { color: var(--muted-foreground); text-align: right; }
+/* Tab bodies (Columns / Indexes / Foreign keys / DDL) share one min-height so
+   switching tabs doesn't make the dialog jump around. */
+.tsql-structure-body { min-height: 220px; padding-top: 10px; }
+.tsql-ddl-wrap { max-height: 52vh; overflow: auto; border: 1px solid var(--border); }
+/* The Structure tab bar reuses .tsql-result-tabs; drop its pane padding since
+   it sits inside a dialog body that already has its own. */
+.tsql-dialog-body > .tsql-result-tabs { padding: 0; background: transparent; }
+
+/* Query history: one row per statement, SQL on the left, actions on the right. */
+.tsql-history-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow: auto; }
+.tsql-history-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); background: var(--card, var(--background)); }
+.tsql-history-sql { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono, monospace); font-size: 11px; color: var(--foreground); white-space: pre-wrap; word-break: break-word; max-height: 84px; overflow: hidden; }
+.tsql-history-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
 
 .tsql-checkbox { width: 14px; height: 14px; cursor: pointer; }
 .tsql-form-error { margin: 10px 0 0; min-height: 14px; font-size: 11px; color: var(--destructive, #ef4444); }

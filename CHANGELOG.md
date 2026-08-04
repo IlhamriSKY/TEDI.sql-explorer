@@ -2,6 +2,152 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.5.0] - 2026-08-04
+
+Correctness and coverage pass over the workbench, focused on MySQL and
+PostgreSQL.
+
+### Fixed (PostgreSQL, wrong data)
+
+- **Browsing a database other than the connected one showed the wrong
+  database's contents.** PostgreSQL binds one database per connection, but the
+  schema, table, and column lookups all ran against the base pool no matter
+  which database the tree asked about. Expanding `reports` while connected to
+  `app` listed `app`'s schemas and tables, with no error to hint at it. The
+  helper now opens (and caches) a pool per database and answers from the right
+  one.
+- **Unqualified table names never resolved in the query editor.** The active
+  context was sent as the DATABASE name and applied as `SET search_path`, which
+  takes SCHEMAS — so the path pointed at something that does not exist and
+  `SELECT * FROM users` failed even with the table open in the tree. The schema
+  is now tracked and sent separately.
+- **The active schema leaked between queries.** `SET search_path` is session
+  state and the connection goes back to the pool carrying it, so a later query
+  that named no schema silently inherited the previous one's. It is now reset
+  explicitly. The same fallback was added on the MySQL side for `USE`.
+- The default schema is `public` when a request doesn't name one, instead of
+  the database name (which is never a schema).
+- **Exporting a table failed outright on PostgreSQL** (`syntax error at or near
+  "\``). The export built its `SELECT` with MySQL backticks whenever the
+  request carried a `database`, which it always does for an open table. Quoting
+  now follows the connection's engine.
+- **Every array, enum and interval column showed as NULL.** `text[]`, `int[]`,
+  a user-defined `ENUM`, `interval` — none of them had a decoder, and the
+  fallback returned NULL, which in the grid is indistinguishable from the
+  column actually being empty. Arrays (including ones containing NULLs) and
+  enums now decode properly, intervals render the way PostgreSQL prints them,
+  and a type that still can't be rendered shows a chip naming it instead of a
+  false NULL.
+- **A view was never reported as a view.** `relkind` is PostgreSQL's internal
+  `"char"` type, so decoding it as text failed and every relation came back
+  labelled a table.
+- A table that has never been analysed reported `-1` rows instead of "unknown".
+
+### Fixed (both engines)
+
+- **`BEGIN` / `COMMIT` in the query editor did nothing reliable.** A statement
+  batch could be spread across several pooled connections, leaving the work in
+  an open transaction on a connection nobody committed. The batch is now pinned
+  to one connection.
+- **Stop left the query running on the server.** Cancelling only dropped the
+  helper's end of the socket; the database kept executing and holding its
+  locks. Cancel now also issues `KILL QUERY` (MySQL) / `pg_cancel_backend()`
+  (PostgreSQL). If the server-side cancel can't be sent, the toast says so
+  rather than implying the statement stopped.
+- **The row cap capped the display, not the transfer.** Results were fetched in
+  full and then truncated, so `SELECT * FROM` a large table pulled every row
+  into the helper's memory regardless of the cap. Query and export now stream
+  and stop at the limit.
+- **Paging a large table re-ran `COUNT(*)` on every page.** The count is now
+  fetched when the filter changes and reused while only the page moves.
+- **A statement that hit the query timeout kept running on the server**, and
+  because the connection stayed stuck behind it, every remaining statement in
+  the batch timed out too. A timeout now cancels server-side like Stop does.
+- **A `bigint` key past 2^53 was shown rounded**, so two different rows could
+  display the same id, and an inline edit keyed on that rounded value matched
+  no row. Integers outside JavaScript's exact range are now sent as text so the
+  real value is what you see. (Editing such a key now fails with an error
+  rather than silently doing nothing; making it round-trip is noted in the
+  code as follow-up.)
+- **An edit or delete that matched no row was reported as saved.** The
+  `affected` count was ignored, so the grid showed the new value and flashed
+  "saved" for a write the database never made. Both now say so and revert.
+- **Truncate / drop from the tree menu could hit the wrong database.** It took
+  its database context from the open table rather than from the node that was
+  right-clicked.
+- **PostgreSQL: no array or JSON column could be written**, and **clearing any
+  non-text cell to NULL failed** ("column is of type integer but expression is
+  of type text"). PostgreSQL type-checks parameters, and everything composite
+  went over as text. The helper now asks the catalog for the column's declared
+  type once and casts the placeholder to it, so `text[]`, `numeric[]`, `date[]`,
+  `uuid[]`, enum arrays, nested arrays, arrays containing NULLs, `jsonb` and a
+  plain NULL all write correctly. Values are still bound parameters; nothing is
+  inlined into the statement.
+- **The PostgreSQL "Database" field hid every other database.** It is the
+  maintenance database the connection attaches to, not a filter, so pinning the
+  usual empty `postgres` left the tree showing nothing but that. The tree now
+  lists every database on the server (as pgAdmin and DBeaver do), and the field
+  is labelled "Maintenance database". MySQL, where the field really does narrow
+  scope, is unchanged.
+
+### Changed
+
+- **Structure pass over both halves.** The sidecar's three biggest modules each
+  did several jobs, so they were split by responsibility: statement splitting /
+  classification / the read-only gate into `sqltext.rs`, the HTTP handlers into
+  `routes.rs`, browsing into `rows.rs`, and parameter binding into `bind.rs`.
+  The largest file went from 687 lines to 471, and the read-only gate — a
+  security boundary that had no tests at all — now has them. On the frontend,
+  the date/time conversions moved out of the picker into a pure `dateParts.js`
+  (also now checked), nine symbols that only their own file used stopped being
+  exported, and the three hand-rolled popup-placement routines collapsed into
+  one `placeFloating`. That last one also fixed a real bug: the select dropdown
+  never clamped to the viewport, so near the bottom of a short pane it opened
+  partly off-screen.
+- **The Run confirmation now covers the mistake people actually make.** An
+  `UPDATE` or `DELETE` with no `WHERE` reads like an edit and rewrites every row
+  in the table, so it now asks first and shows the statement, alongside the
+  existing DROP / TRUNCATE / GRANT prompt. Reads and targeted writes still run
+  straight away, because a prompt on every Run is one that gets clicked
+  through.
+
+### Added
+
+- **SSH tunnel**, so a database that only a bastion host can reach is usable at
+  all. A managed database normally sits in a private subnet with its port open
+  to a jump host and nothing else, and a direct connect just times out.
+  Unlike pgAdmin, the connection does NOT re-ask for the SSH host, user and key:
+  it picks one of the SSH connections you already have saved in TEDI, and the
+  app opens the forward using credentials from the OS keychain. The extension
+  only ever receives a loopback port, so it never handles your private key and
+  needs no filesystem access to read a `.pem`. A host whose key has not been
+  verified yet is refused, since confirming a fingerprint needs a human, and a
+  jump chain configured on that SSH connection is honoured because the same
+  resolver the terminal uses resolves it. One SSH session is shared by every
+  database tunnelling through the same host, and closes with the last one.
+  (Note: through a tunnel the server certificate is checked against
+  `127.0.0.1`, so TLS "Verify full" cannot be used; "Required" can.)
+- **Structure now covers indexes, foreign keys, and DDL**, not just columns:
+  four tabs, each loaded on first view. Foreign keys show their referenced
+  table and `ON UPDATE` / `ON DELETE` actions; DDL is `SHOW CREATE TABLE` on
+  MySQL and reconstructed from the catalog on PostgreSQL.
+- **Run only what you selected.** Highlight part of the editor and Run sends
+  just that, instead of the whole script.
+- **Explain** — the execution plan for the selected (or only) statement. Uses
+  plain `EXPLAIN`, never `ANALYZE`, so asking for a plan never runs the
+  statement.
+- **Query history** per connection, with copy and load-into-editor. Statements
+  that look like they carry a credential are not recorded.
+- **Right-click menu on the schema tree**: refresh a single node (instead of
+  collapsing the whole tree), copy the qualified name, drop a `SELECT` skeleton
+  into the editor, open Structure, pick the schema for unqualified names, and
+  truncate / drop a table on a writable connection.
+
+> Needs TEDI >= 0.4.9 for run-selection, the tree menu, and SSH tunnelling. On
+> older hosts Run falls back to running the whole editor, the tree menu simply
+> doesn't open, and the SSH-tunnel field says so instead of offering a host it
+> could not reach. Everything else in this release works on the TEDI you have.
+
 ## [0.4.10] - 2026-08-03
 
 - Add: the workbench reopens where you left it. The connection that was open and

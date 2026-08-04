@@ -6,6 +6,7 @@ import { openCenteredDialog } from "../dialogs.js";
 import { checkbox, clearChildren, cryptoId, el, input, numberInput, safeToast, select } from "../dom.js";
 import { ctx } from "../runtime.js";
 import { connectFromForm, saveAndConnect } from "./lifecycle.js";
+import { listSshHosts, tunnelsSupported } from "./tunnel.js";
 import { getSecret } from "./store.js";
 
 export async function openConnectionDialog(existing) {
@@ -29,8 +30,13 @@ export async function openConnectionDialog(existing) {
   const { body, close } = openCenteredDialog({
     title: isEdit ? "Edit connection" : "New connection",
   });
+  // Saved SSH hosts for the tunnel picker. Fetched before the first paint so
+  // the field renders with its real options instead of popping in.
+  const sshHosts = await listSshHosts();
+
   const form = {
     id: existing?.id ?? cryptoId(),
+    sshTunnel: existing?.sshTunnel ?? "",
     name: existing?.name ?? "",
     kind: existing?.kind ?? "mysql",
     host: existing?.host ?? "127.0.0.1",
@@ -109,12 +115,42 @@ export async function openConnectionDialog(existing) {
         }),
       ),
       field(
-        "Database (optional)",
+        getDialect(form.kind).databaseIsConnectTarget
+          ? "Maintenance database"
+          : "Database (optional)",
         input({
           value: form.database,
           onInput: (v) => (form.database = v),
-          placeholder: "leave blank to browse all",
+          placeholder: getDialect(form.kind).databaseIsConnectTarget
+            ? "postgres"
+            : "leave blank to browse all",
         }),
+      ),
+      // Tunnel through a host saved in TEDI's SSH manager. Named by id: the
+      // credentials stay in the keychain and never reach this extension.
+      field(
+        "SSH tunnel",
+        sshHosts.length
+          ? select(
+              [
+                { value: "", label: "None (connect directly)" },
+                ...sshHosts.map((h) => ({
+                  value: h.id,
+                  label: `${h.name || h.host} (${h.user}@${h.host})`,
+                })),
+              ],
+              form.sshTunnel,
+              (v) => (form.sshTunnel = v),
+            )
+          : el("span", {
+              class: "tsql-label-type",
+              // Three reasons the list can be empty, and the user can only act
+              // on two of them, so say which one this is.
+              text: tunnelsSupported()
+                ? "No verified SSH hosts yet. Add one in the SSH sidebar and open it once to confirm its fingerprint."
+                : "SSH tunnels need a newer TEDI.",
+            }),
+        true,
       ),
       field(
         "TLS",

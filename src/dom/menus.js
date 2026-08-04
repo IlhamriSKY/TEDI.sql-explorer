@@ -31,6 +31,32 @@ export function closeAllSelectMenus() {
  * pane teardown (`closeAllSelectMenus()`) force-closes it too instead of
  * orphaning a body-mounted popup. Returns an unregister fn.
  */
+/**
+ * Place a body-mounted floating layer (a menu, a picker popup) inside the
+ * viewport.
+ *
+ * `anchor` is either a DOMRect to hang below — flipping above when there is no
+ * room underneath — or an `{x, y}` point to open at, for a right-click. Every
+ * floating layer here used to do this by hand and differently, and the select
+ * menu did not clamp at all: near the bottom of a short pane it opened partly
+ * off-screen.
+ */
+export function placeFloating(node, anchor, { gap = 4, margin = 8 } = {}) {
+  const w = node.offsetWidth;
+  const h = node.offsetHeight;
+  const anchored = typeof anchor.bottom === "number";
+  let left = anchored ? anchor.left : anchor.x;
+  let top = anchored ? anchor.bottom + gap : anchor.y;
+  if (anchored && top + h > window.innerHeight - margin && anchor.top - h - gap > margin) {
+    top = anchor.top - h - gap;
+  } else {
+    top = Math.min(top, window.innerHeight - h - margin);
+  }
+  left = Math.min(left, window.innerWidth - w - margin);
+  node.style.left = `${Math.max(margin, left)}px`;
+  node.style.top = `${Math.max(margin, top)}px`;
+}
+
 export function trackFloatingMenu(closeFn) {
   openSelectMenus.add(closeFn);
   return () => openSelectMenus.delete(closeFn);
@@ -131,8 +157,6 @@ export function select(options, current, onChange, opts = {}) {
       attrs: { role: "listbox" },
     });
     menu.style.position = "fixed";
-    menu.style.left = `${rect.left}px`;
-    menu.style.top = `${rect.bottom + 4}px`;
     menu.style.minWidth = `${Math.max(rect.width, 200)}px`;
     menu.style.zIndex = "10000";
 
@@ -164,6 +188,7 @@ export function select(options, current, onChange, opts = {}) {
     }
 
     document.body.appendChild(menu);
+    placeFloating(menu, rect);
     trigger.setAttribute("aria-expanded", "true");
     isOpen = true;
     openSelectMenus.add(closeMenu);
@@ -238,13 +263,7 @@ export function openContextMenu(event, items) {
   }
 
   document.body.appendChild(menu);
-  // Clamp to the viewport so an edge click doesn't push the menu off-screen.
-  const mw = menu.offsetWidth;
-  const mh = menu.offsetHeight;
-  const x = Math.min(event.clientX, window.innerWidth - mw - 8);
-  const y = Math.min(event.clientY, window.innerHeight - mh - 8);
-  menu.style.left = `${Math.max(8, x)}px`;
-  menu.style.top = `${Math.max(8, y)}px`;
+  placeFloating(menu, { x: event.clientX, y: event.clientY });
 
   openSelectMenus.add(close);
   requestAnimationFrame(() => {

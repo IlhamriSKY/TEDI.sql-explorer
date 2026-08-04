@@ -14,6 +14,7 @@ use sqlx::{Column, Row, TypeInfo};
 use tokio_util::sync::CancellationToken;
 
 use crate::db::Backend;
+use crate::sqltext::{StatementKind, classify, is_read_only_safe, split_statements};
 use crate::error::{AppError, AppResult};
 use crate::schema::{escape_mysql_ident, escape_pg_ident};
 use crate::state::ConnectionConfig;
@@ -33,11 +34,16 @@ pub struct QueryRequest {
     /// id to abort an in-flight query.
     #[serde(default)]
     pub request_id: Option<String>,
-    /// Active database / schema context for the query. MySQL: pins the
-    /// session to `USE <db>` so unqualified table names resolve. Postgres:
-    /// sets `search_path`. SQLite: ignored (single-file dbs).
+    /// Active database context. MySQL: pins the session with `USE <db>` so
+    /// unqualified table names resolve. PostgreSQL: selects which per-database
+    /// pool answers (PG binds one database per connection). SQLite: ignored.
     #[serde(default)]
     pub database: Option<String>,
+    /// Active schema context. PostgreSQL only: becomes the session
+    /// `search_path`, which is what actually resolves an unqualified table
+    /// name there — the DATABASE name never does.
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -76,315 +82,94 @@ pub struct ColumnHeader {
     pub data_type: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum StatementKind {
-    Read,
-    Write,
-    Ddl,
-    Unknown,
-}
-
-/// Naive statement splitter. Respects single / double / backtick quotes,
-/// `--` line comments, and `/* ... */` block comments. Good enough for
-/// "user-typed query editor" semantics; not a full SQL parser.
-pub fn split_statements(sql: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut chars = sql.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-
-    while let Some(ch) = chars.next() {
-        if in_line_comment {
-            cur.push(ch);
-            if ch == '\n' {
-                in_line_comment = false;
-            }
-            continue;
-        }
-        if in_block_comment {
-            cur.push(ch);
-            if ch == '*' && chars.peek() == Some(&'/') {
-                cur.push(chars.next().unwrap());
-                in_block_comment = false;
-            }
-            continue;
-        }
-        if in_single {
-            cur.push(ch);
-            if ch == '\\' {
-                if let Some(&n) = chars.peek() {
-                    cur.push(n);
-                    chars.next();
-                }
-                continue;
-            }
-            if ch == '\'' {
-                in_single = false;
-            }
-            continue;
-        }
-        if in_double {
-            cur.push(ch);
-            if ch == '\\' {
-                if let Some(&n) = chars.peek() {
-                    cur.push(n);
-                    chars.next();
-                }
-                continue;
-            }
-            if ch == '"' {
-                in_double = false;
-            }
-            continue;
-        }
-        if in_backtick {
-            cur.push(ch);
-            if ch == '`' {
-                in_backtick = false;
-            }
-            continue;
-        }
-        match ch {
-            '\'' => {
-                in_single = true;
-                cur.push(ch);
-            }
-            '"' => {
-                in_double = true;
-                cur.push(ch);
-            }
-            '`' => {
-                in_backtick = true;
-                cur.push(ch);
-            }
-            '-' if chars.peek() == Some(&'-') => {
-                cur.push(ch);
-                cur.push(chars.next().unwrap());
-                in_line_comment = true;
-            }
-            '/' if chars.peek() == Some(&'*') => {
-                cur.push(ch);
-                cur.push(chars.next().unwrap());
-                in_block_comment = true;
-            }
-            ';' => {
-                let trimmed = cur.trim();
-                if !trimmed.is_empty() {
-                    out.push(trimmed.to_string());
-                }
-                cur.clear();
-            }
-            _ => cur.push(ch),
-        }
-    }
-    let trimmed = cur.trim();
-    if !trimmed.is_empty() {
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
-/// Classify a single statement based on its first significant keyword.
-pub fn classify(sql: &str) -> StatementKind {
-    let cleaned = strip_leading_comments(sql);
-    let mut first = String::new();
-    for ch in cleaned.chars() {
-        if ch.is_alphabetic() {
-            first.push(ch.to_ascii_uppercase());
-        } else if first.is_empty() {
-            continue;
-        } else {
-            break;
-        }
-    }
-    match first.as_str() {
-        "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "PRAGMA" | "VALUES" => {
-            StatementKind::Read
-        }
-        "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "MERGE" | "UPSERT" | "CALL" => {
-            StatementKind::Write
-        }
-        "CREATE" | "DROP" | "ALTER" | "TRUNCATE" | "RENAME" | "GRANT" | "REVOKE" | "COMMENT" | "VACUUM" | "REINDEX" | "ANALYZE" => StatementKind::Ddl,
-        "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" | "SET" | "USE" => {
-            // Transaction control + session SETs don't violate `allow_writes`.
-            StatementKind::Read
-        }
-        _ => StatementKind::Unknown,
-    }
-}
-
-fn strip_leading_comments(sql: &str) -> &str {
-    let bytes = sql.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b' ' | b'\t' | b'\r' | b'\n' => i += 1,
-            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
-                // line comment until newline
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i += 2;
-            }
-            _ => break,
-        }
-    }
-    std::str::from_utf8(&bytes[i.min(bytes.len())..]).unwrap_or("")
-}
-
-/// True if every statement in `sql` is safe to run on a read-only connection
-/// (see `is_read_only_safe`). Used by the export path, which would otherwise
-/// run caller-supplied SQL with no statement-kind gate. Empty input is
-/// rejected so a blank export errors cleanly rather than silently.
-pub fn all_statements_read_only(sql: &str) -> bool {
-    let statements = split_statements(sql);
-    !statements.is_empty()
-        && statements
-            .iter()
-            .all(|stmt| is_read_only_safe(stmt, classify(stmt)))
-}
-
-/// Conservative write-gate for read-only connections.
-///
-/// `classify()` keys only on a statement's first keyword, so on its own it
-/// would wave through writes disguised as reads: a data-modifying CTE
-/// (`WITH x AS (DELETE ... RETURNING *) SELECT ...`), `EXPLAIN ANALYZE
-/// <write>` (which executes the inner statement on PostgreSQL), and anything
-/// that lands in `Unknown` (`COPY ... FROM`, `LOAD DATA`, `REFRESH
-/// MATERIALIZED VIEW`, ...). A statement is therefore allowed on a read-only
-/// connection only when it is a recognised read that is neither a writing CTE
-/// nor an `EXPLAIN ANALYZE`. `StatementKind` is left untouched, so the
-/// rows-vs-exec execution path is unchanged on writable connections.
-///
-/// Still a heuristic: a `SELECT` of a volatile / writing function can mutate.
-/// For a hard guarantee, connect with a database-level read-only role.
-fn is_read_only_safe(sql: &str, kind: StatementKind) -> bool {
-    if kind != StatementKind::Read {
-        return false;
-    }
-    let head = strip_quotes_and_comments(sql)
-        .trim_start()
-        .to_ascii_uppercase();
-    if let Some(rest) = head.strip_prefix("WITH") {
-        return !word_present(rest, &["INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE"]);
-    }
-    if let Some(rest) = head.strip_prefix("EXPLAIN") {
-        return !word_present(rest, &["ANALYZE", "ANALYSE"]);
-    }
-    true
-}
-
-/// Blank out `--` / `/* */` comments and single / double / backtick-quoted
-/// spans so a keyword scan only ever sees bare SQL (a `DELETE` inside a
-/// string literal or a `"delete"` identifier must not trip the gate).
-fn strip_quotes_and_comments(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '-' if chars.peek() == Some(&'-') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-                out.push(' ');
-            }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                while let Some(c) = chars.next() {
-                    if c == '*' && chars.peek() == Some(&'/') {
-                        chars.next();
-                        break;
-                    }
-                }
-                out.push(' ');
-            }
-            '\'' | '"' | '`' => {
-                while let Some(c) = chars.next() {
-                    if c == '\\' {
-                        chars.next();
-                        continue;
-                    }
-                    if c == ch {
-                        break;
-                    }
-                }
-                out.push(' ');
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
-/// True if `haystack` contains any `needle` as a whole word (ASCII
-/// alphanumeric / underscore boundaries). Both are assumed uppercased.
-fn word_present(haystack: &str, needles: &[&str]) -> bool {
-    let bytes = haystack.as_bytes();
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    needles.iter().any(|needle| {
-        haystack.match_indices(needle).any(|(start, _)| {
-            let end = start + needle.len();
-            (start == 0 || !is_word(bytes[start - 1]))
-                && (end == bytes.len() || !is_word(bytes[end]))
-        })
-    })
+/// Everything a batch needs beyond the connection itself.
+pub struct ExecuteOptions<'a> {
+    pub row_limit: u64,
+    pub timeout: Duration,
+    pub cancel: CancellationToken,
+    /// MySQL: the database to `USE`. PostgreSQL: informational (which pool
+    /// answers is already decided by the caller).
+    pub database: Option<&'a str>,
+    /// PostgreSQL: the schema that becomes `search_path`.
+    pub schema: Option<&'a str>,
+    /// Filled in with the server-side connection id once the batch is pinned,
+    /// so `/cancel` can stop the statement in the database.
+    pub backend_pid: Option<&'a std::sync::Arc<tokio::sync::RwLock<Option<i64>>>>,
 }
 
 pub async fn execute(
     backend: &Backend,
     config: &ConnectionConfig,
     sql: &str,
-    row_limit: u64,
-    timeout: Duration,
-    cancel: CancellationToken,
-    database: Option<&str>,
+    opts: ExecuteOptions<'_>,
 ) -> AppResult<Vec<StatementResult>> {
+    let ExecuteOptions { row_limit, timeout, cancel, database, schema, backend_pid } = opts;
     let statements = split_statements(sql);
     if statements.is_empty() {
         return Err(AppError::BadRequest("empty SQL".into()));
     }
 
-    // Database context: acquire a single connection from the pool and pin
-    // it for the whole batch so `USE <db>` (MySQL) or `SET search_path`
-    // (Postgres) survives across statements. Without this, sqlx's
-    // pool.execute() may hand a different physical connection to each
-    // statement, dropping the session-level setting.
+    // Acquire ONE connection and pin it for the whole batch. Two things need
+    // this, not just the database context:
+    //   - session state (`USE <db>` / `SET search_path`) must survive across
+    //     statements;
+    //   - so must a transaction. `BEGIN; UPDATE …; COMMIT;` run through
+    //     `pool.execute()` can land on three different physical connections,
+    //     which leaves the UPDATE in an open transaction on a connection
+    //     nobody commits. Pinning unconditionally is what makes explicit
+    //     transactions in the query editor behave.
     // MySQL `USE` (and some `SET` / `SHOW` variants) are not supported by
     // the prepared-statement protocol and return error 1295. Send these
     // session-control statements via the text protocol by calling
     // `Executor::execute(&str)` directly, which sqlx routes through the
     // simple-query path (no `COM_STMT_PREPARE`).
     use sqlx::Executor as _;
-    let pinned: Option<PinnedConn> = match (backend, database) {
-        (Backend::Mysql(pool), Some(db)) if !db.is_empty() => {
+    let mut pinned: Option<PinnedConn> = match backend {
+        Backend::Mysql(pool) => {
             let mut conn = pool.acquire().await?;
-            let use_sql = format!("USE {}", escape_mysql_ident(db)?);
-            (&mut *conn).execute(use_sql.as_str()).await?;
+            // Same session-state caveat as the Postgres arm below: the pooled
+            // connection keeps whatever database a previous batch selected.
+            // MySQL has no "select no database", so the caller passes the
+            // connection's own current database as the fallback (see
+            // `handle_query`), which makes this `USE` run on every batch.
+            if let Some(db) = database.filter(|d| !d.is_empty()) {
+                let use_sql = format!("USE {}", escape_mysql_ident(db)?);
+                (&mut *conn).execute(use_sql.as_str()).await?;
+            }
             Some(PinnedConn::Mysql(conn))
         }
-        (Backend::Postgres(pool), Some(db)) if !db.is_empty() => {
+        Backend::Postgres(pool) => {
             let mut conn = pool.acquire().await?;
-            let set_sql = format!("SET search_path TO {}", escape_pg_ident(db)?);
+            // PostgreSQL resolves unqualified names through `search_path`,
+            // which holds SCHEMAS. Feeding it the database name (as this used
+            // to) sets a search_path that matches nothing, so every
+            // unqualified `SELECT * FROM users` failed. `public` stays on the
+            // path so extensions and shared types keep resolving.
+            //
+            // The `else` arm is not optional: `SET` is session state, and the
+            // connection goes back to the pool carrying it. Without an
+            // explicit reset, a later batch that names no schema silently
+            // inherits the previous batch's search_path and resolves
+            // unqualified names in a schema the caller never asked for.
+            let set_sql = match schema.filter(|s| !s.is_empty()) {
+                Some(sc) => format!("SET search_path TO {}, public", escape_pg_ident(sc)?),
+                None => "SET search_path TO DEFAULT".to_string(),
+            };
             (&mut *conn).execute(set_sql.as_str()).await?;
             Some(PinnedConn::Postgres(conn))
         }
-        _ => None,
+        Backend::Sqlite(_) => None,
     };
 
+    // Publish the server-side connection id so `/cancel` can stop the query
+    // in the database, not just drop our end of the socket.
+    if let Some(slot) = backend_pid {
+        if let Some(pid) = pinned_backend_pid(pinned.as_mut()).await {
+            *slot.write().await = Some(pid);
+        }
+    }
+
     let mut out = Vec::with_capacity(statements.len());
-    let mut pinned = pinned;
     for stmt in statements {
         if cancel.is_cancelled() {
             out.push(StatementResult::Error {
@@ -431,11 +216,22 @@ pub async fn execute(
                 });
                 break;
             }
-            Err(AppError::Timeout) => out.push(StatementResult::Error {
-                sql: stmt,
-                error: format!("timed out after {} ms", timeout.as_millis()),
-                elapsed_ms: elapsed,
-            }),
+            Err(AppError::Timeout) => {
+                // Dropping the future only stops US waiting. The server keeps
+                // executing the statement (holding its locks), and the pinned
+                // connection stays stuck behind it — so every REMAINING
+                // statement in the batch timed out too, in a cascade. Tell the
+                // server to abort, which also frees the connection to carry on
+                // with the rest of the batch.
+                if let Some(pid) = read_backend_pid(backend_pid).await {
+                    cancel_on_server(backend, pid).await;
+                }
+                out.push(StatementResult::Error {
+                    sql: stmt,
+                    error: format!("timed out after {} ms", timeout.as_millis()),
+                    elapsed_ms: elapsed,
+                });
+            }
             Err(e) => out.push(StatementResult::Error {
                 sql: stmt,
                 error: e.to_string(),
@@ -446,12 +242,70 @@ pub async fn execute(
     Ok(out)
 }
 
-/// Holds the pool-acquired connection pinned to the batch's database
-/// context. Dropped at the end of `execute()` to return the connection
-/// to the pool. SQLite has no database concept so it never pins.
+/// Holds the pool-acquired connection pinned for the batch, so session state
+/// and open transactions survive across its statements. Dropped at the end of
+/// `execute()` to return the connection to the pool. SQLite is single-writer
+/// and has no session/database concept, so it never pins.
 enum PinnedConn {
     Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
     Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
+}
+
+/// The database server's own id for the pinned connection (`CONNECTION_ID()`
+/// on MySQL, `pg_backend_pid()` on PostgreSQL). Best-effort: a failure just
+/// means `/cancel` falls back to abandoning the request locally.
+async fn pinned_backend_pid(pinned: Option<&mut PinnedConn>) -> Option<i64> {
+    use sqlx::Row as _;
+    match pinned? {
+        PinnedConn::Mysql(conn) => sqlx::query("SELECT CONNECTION_ID() AS id")
+            .fetch_one(&mut **conn)
+            .await
+            .ok()
+            .and_then(|r| {
+                r.try_get::<u64, _>("id")
+                    .map(|v| v as i64)
+                    .or_else(|_| r.try_get::<i64, _>("id"))
+                    .ok()
+            }),
+        PinnedConn::Postgres(conn) => sqlx::query("SELECT pg_backend_pid() AS id")
+            .fetch_one(&mut **conn)
+            .await
+            .ok()
+            .and_then(|r| r.try_get::<i32, _>("id").map(i64::from).ok()),
+    }
+}
+
+/// The server-side connection id published by `execute`, if it got one.
+async fn read_backend_pid(
+    slot: Option<&std::sync::Arc<tokio::sync::RwLock<Option<i64>>>>,
+) -> Option<i64> {
+    match slot {
+        Some(s) => *s.read().await,
+        None => None,
+    }
+}
+
+/// Ask the server to abort whatever `backend_pid` is running. Dropping the
+/// Rust future only closes our socket; without this the database keeps
+/// grinding through the statement (and holding its locks) after "Stop".
+/// Runs on a SEPARATE pool connection — the busy one won't answer.
+pub async fn cancel_on_server(backend: &Backend, backend_pid: i64) {
+    let result = match backend {
+        Backend::Mysql(pool) => sqlx::query(&format!("KILL QUERY {backend_pid}"))
+            .execute(pool)
+            .await
+            .map(|_| ()),
+        Backend::Postgres(pool) => sqlx::query("SELECT pg_cancel_backend($1)")
+            .bind(backend_pid as i32)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+        // SQLite runs in-process; there is no server-side statement to kill.
+        Backend::Sqlite(_) => Ok(()),
+    };
+    if let Err(e) = result {
+        tracing::warn!("server-side cancel of {backend_pid} failed: {e}");
+    }
 }
 
 fn stamp_elapsed(sr: &mut StatementResult, elapsed_ms: u64) {
@@ -462,6 +316,90 @@ fn stamp_elapsed(sr: &mut StatementResult, elapsed_ms: u64) {
     }
 }
 
+/// Headers from a preflight `prepare`, so a 0-row result still names its
+/// columns. sqlx caches the prepared statement, so the fetch that follows
+/// reuses it instead of paying a second round-trip.
+macro_rules! prepared_headers {
+    ($exec:expr, $sql:expr) => {{
+        use sqlx::{Executor as _, Statement as _};
+        $exec.prepare($sql).await.ok().map(|s| {
+            s.columns()
+                .iter()
+                .map(|c| ColumnHeader {
+                    name: c.name().to_string(),
+                    data_type: c.type_info().name().to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
+    }};
+}
+
+/// Read at most `limit` rows, decoding as we go and stopping the moment the
+/// cap is hit.
+///
+/// This used to be `fetch_all(..).take(limit)`, which pulls the WHOLE result
+/// set over the wire and into memory before throwing most of it away — a
+/// `SELECT * FROM` a large table would balloon the helper's RSS (or kill it)
+/// no matter how low the row cap was set. Streaming means the cap actually
+/// caps. Reading one row past `limit` is what tells us the result was
+/// truncated; dropping the stream there stops the transfer.
+macro_rules! fetch_capped {
+    ($exec:expr, $sql:expr, $limit:expr, $decode:path) => {{
+        use futures_util::StreamExt as _;
+        let mut stream = sqlx::query($sql).fetch($exec);
+        let mut decoded: Vec<Vec<Value>> = Vec::new();
+        let mut fallback_headers: Option<Vec<ColumnHeader>> = None;
+        let mut truncated = false;
+        while let Some(row) = stream.next().await {
+            let row = row?;
+            if decoded.len() as u64 >= $limit {
+                truncated = true;
+                break;
+            }
+            if fallback_headers.is_none() {
+                fallback_headers = Some(
+                    row.columns()
+                        .iter()
+                        .map(|c| ColumnHeader {
+                            name: c.name().to_string(),
+                            data_type: c.type_info().name().to_string(),
+                        })
+                        .collect(),
+                );
+            }
+            decoded.push($decode(&row));
+        }
+        drop(stream);
+        (decoded, fallback_headers, truncated)
+    }};
+}
+
+/// One `(exec, decode)` pair's read + exec arms. The five call sites below
+/// differ only in which executor they hand over and how a row decodes.
+macro_rules! run_stmt {
+    ($exec:expr, $sql:expr, $is_read:expr, $limit:expr, $decode:path) => {{
+        if $is_read {
+            let headers = prepared_headers!($exec, $sql);
+            let (rows, fallback, truncated) = fetch_capped!($exec, $sql, $limit, $decode);
+            Ok(StatementResult::Rows {
+                sql: $sql.to_string(),
+                columns: headers.or(fallback).unwrap_or_default(),
+                rows,
+                truncated,
+                elapsed_ms: 0,
+            })
+        } else {
+            use sqlx::Executor as _;
+            let r = $exec.execute(sqlx::query($sql)).await?;
+            Ok(StatementResult::Exec {
+                sql: $sql.to_string(),
+                rows_affected: r.rows_affected(),
+                elapsed_ms: 0,
+            })
+        }
+    }};
+}
+
 async fn run_one(
     backend: &Backend,
     pinned: Option<&mut PinnedConn>,
@@ -469,165 +407,16 @@ async fn run_one(
     kind: StatementKind,
     row_limit: u64,
 ) -> AppResult<StatementResult> {
-    use sqlx::{Executor as _, Statement as _};
     let is_read = matches!(kind, StatementKind::Read | StatementKind::Unknown);
     match (backend, pinned) {
-        (Backend::Mysql(_), Some(PinnedConn::Mysql(conn))) => {
-            if is_read {
-                // Preflight prepare so the column metadata survives 0-row
-                // result sets. sqlx caches the prepared statement so
-                // `fetch_all` below reuses it without a second round-trip.
-                let prep_cols: Option<Vec<ColumnHeader>> = (&mut **conn)
-                    .prepare(sql)
-                    .await
-                    .ok()
-                    .map(|s| {
-                        s.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    });
-                let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
-                let (columns, decoded, truncated) = collect_mysql_rows(rows, prep_cols, row_limit);
-                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
-            } else {
-                let r = sqlx::query(sql).execute(&mut **conn).await?;
-                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
-            }
+        (_, Some(PinnedConn::Mysql(conn))) => {
+            run_stmt!(&mut **conn, sql, is_read, row_limit, decode_mysql_row)
         }
-        (Backend::Postgres(_), Some(PinnedConn::Postgres(conn))) => {
-            if is_read {
-                let prep_cols: Option<Vec<ColumnHeader>> = (&mut **conn)
-                    .prepare(sql)
-                    .await
-                    .ok()
-                    .map(|s| {
-                        s.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    });
-                let rows = sqlx::query(sql).fetch_all(&mut **conn).await?;
-                let (columns, decoded, truncated) = collect_pg_rows(rows, prep_cols, row_limit);
-                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
-            } else {
-                let r = sqlx::query(sql).execute(&mut **conn).await?;
-                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
-            }
+        (_, Some(PinnedConn::Postgres(conn))) => {
+            run_stmt!(&mut **conn, sql, is_read, row_limit, decode_pg_row)
         }
-        (Backend::Mysql(pool), _) => {
-            if is_read {
-                let prep_cols: Option<Vec<ColumnHeader>> = pool
-                    .prepare(sql)
-                    .await
-                    .ok()
-                    .map(|s| {
-                        s.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    });
-                let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_mysql_rows(rows, prep_cols, row_limit);
-                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
-            } else {
-                let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
-            }
-        }
-        (Backend::Postgres(pool), _) => {
-            if is_read {
-                let prep_cols: Option<Vec<ColumnHeader>> = pool
-                    .prepare(sql)
-                    .await
-                    .ok()
-                    .map(|s| {
-                        s.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    });
-                let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_pg_rows(rows, prep_cols, row_limit);
-                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
-            } else {
-                let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
-            }
-        }
-        (Backend::Sqlite(pool), _) => {
-            if is_read {
-                let prep_cols: Option<Vec<ColumnHeader>> = pool
-                    .prepare(sql)
-                    .await
-                    .ok()
-                    .map(|s| {
-                        s.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    });
-                let rows = sqlx::query(sql).fetch_all(pool).await?;
-                let (columns, decoded, truncated) = collect_sqlite_rows(rows, prep_cols, row_limit);
-                Ok(StatementResult::Rows { sql: sql.to_string(), columns, rows: decoded, truncated, elapsed_ms: 0 })
-            } else {
-                let r = pool.execute(sqlx::query(sql)).await?;
-                Ok(StatementResult::Exec { sql: sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
-            }
-        }
+        (Backend::Mysql(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_mysql_row),
+        (Backend::Postgres(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_pg_row),
+        (Backend::Sqlite(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_sqlite_row),
     }
 }
-
-// The three collectors differ only in the row type and per-row decode fn;
-// everything else (header fallback, truncation check, take(limit).map(decode))
-// is identical. A macro keeps them in lockstep, mirroring `impl_bind!` in
-// edit.rs. `Column` / `Row` / `TypeInfo` are imported at the top of the file.
-macro_rules! impl_collect {
-    ($name:ident, $row:ty, $decode:path) => {
-        fn $name(
-            rows: Vec<$row>,
-            header_override: Option<Vec<ColumnHeader>>,
-            limit: u64,
-        ) -> (Vec<ColumnHeader>, Vec<Vec<Value>>, bool) {
-            let columns = header_override
-                .or_else(|| {
-                    rows.first().map(|r| {
-                        r.columns()
-                            .iter()
-                            .map(|c| ColumnHeader {
-                                name: c.name().to_string(),
-                                data_type: c.type_info().name().to_string(),
-                            })
-                            .collect()
-                    })
-                })
-                .unwrap_or_default();
-            let truncated = rows.len() as u64 > limit;
-            let decoded: Vec<Vec<Value>> = rows
-                .into_iter()
-                .take(limit as usize)
-                .map(|r| $decode(&r))
-                .collect();
-            (columns, decoded, truncated)
-        }
-    };
-}
-
-impl_collect!(collect_mysql_rows, sqlx::mysql::MySqlRow, decode_mysql_row);
-impl_collect!(collect_pg_rows, sqlx::postgres::PgRow, decode_pg_row);
-impl_collect!(collect_sqlite_rows, sqlx::sqlite::SqliteRow, decode_sqlite_row);

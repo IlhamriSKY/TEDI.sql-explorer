@@ -23,6 +23,7 @@
 import {
   loadSavedConnections,
   refreshSavedConnections,
+  releaseTunnel,
   restoreWorkbenchSession,
   selectConnection,
 } from "./connections.js";
@@ -184,6 +185,9 @@ export async function deactivate() {
     if (sidecar?.handle != null) {
       await ctx.invoke("shell_bg_kill", { handle: sidecar.handle }).catch(() => {});
     }
+    // SSH forwards live in the host, not in this extension, so disabling it
+    // would otherwise leave a jump-host session open until the app exits.
+    await Promise.all(state.connections.map((c) => releaseTunnel(c)));
     // Drop the published endpoint too, so the next window probes a dead port
     // once instead of adopting a helper that is being shut down.
     await clearPublishedEndpoint();

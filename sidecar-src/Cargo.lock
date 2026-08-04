@@ -1671,12 +1671,13 @@ dependencies = [
 
 [[package]]
 name = "tedi-sql-helper"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "axum",
  "base64",
  "bigdecimal",
  "chrono",
+ "futures-util",
  "hex",
  "hyper",
  "rand",

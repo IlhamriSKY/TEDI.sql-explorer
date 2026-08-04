@@ -15,6 +15,7 @@ export const sqlite = {
   defaultPort: "",
   urlScheme: "sqlite",
   quoteChar: '"',
+  explainPrefix: "EXPLAIN QUERY PLAN ",
   ssl: null,
   keywords: [
     "AUTOINCREMENT", "ROWID", "PRAGMA", "ATTACH", "DETACH", "VACUUM",

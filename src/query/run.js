@@ -1,40 +1,83 @@
 // SQL Explorer — query/run: run + cancel the active query. Bundled by build.mjs.
 import { ensureSession } from "../connections.js";
+import { getDialect } from "../dialects/index.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { clearChildren, el, safeToast } from "../dom.js";
 import { setActionSql } from "../render.js";
 import { panelRoot, state } from "../runtime.js";
 import { ensureSidecar, fetchJson } from "../sidecar.js";
-import { containsDestructive } from "../sql.js";
+import { destructiveReason, sqlLanguageForSession } from "../sql.js";
+import { record } from "./history.js";
 import { renderQueryResult } from "./results.js";
 
-export async function runActiveQuery() {
+/**
+ * The SQL a Run should send: the selection when the user highlighted one,
+ * otherwise the whole editor.
+ *
+ * Running only what you highlighted is standard in every SQL console, and it
+ * is the difference between iterating on one statement inside a long script
+ * and re-running the whole script every time. Needs the host's
+ * `codeEditor.getSelection` (TEDI >= 0.4.9); older hosts fall back to the
+ * whole editor, which is the previous behaviour.
+ */
+function activeSql(session) {
+  const selected = (state.editorHandle?.getSelection?.() ?? "").trim();
+  return selected || session.sql;
+}
+
+/** True when `sql` holds more than one statement (a `;` with anything after
+ *  it). Used to keep Explain from running the statements it can't explain. */
+function hasMultipleStatements(sql) {
+  return /;\s*\S/.test(String(sql ?? "").trim());
+}
+
+export async function runActiveQuery(opts = {}) {
   if (!state.active) return;
   const session = ensureSession(state.active);
-  if (!session.sql.trim()) return;
-  if (containsDestructive(session.sql)) {
-    const ok = await openConfirmDialog({
-      title: "Run destructive statement?",
-      message:
-        "This query looks destructive (DROP / TRUNCATE / GRANT). Run it against the connected database?",
-      confirmLabel: "Run",
-      destructive: true,
-    });
-    if (!ok) return;
+  let sql = activeSql(session).trim();
+  if (!sql) return;
+
+  if (opts.explain) {
+    if (hasMultipleStatements(sql)) {
+      safeToast("Select a single statement to explain.", "warning");
+      return;
+    }
+    const kind = state.connections.find((c) => c.id === session.connId)?.kind;
+    // Strip the trailing `;` first so the prefix produces one valid statement.
+    sql = `${getDialect(kind).explainPrefix}${sql.replace(/;\s*$/, "")}`;
+  } else {
+    // Show the statement in the modal, not just a warning about it: the point
+    // of the confirmation is to read what is about to run.
+    const reason = destructiveReason(sql);
+    if (reason) {
+      const ok = await openConfirmDialog({
+        title: "Run this statement?",
+        message: reason,
+        sql,
+        language: sqlLanguageForSession(session),
+        confirmLabel: "Run",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
   }
+
   await ensureSidecar();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   session.requestId = requestId;
   session.activeTable = null;
   session.result = null;
   // A typed query isn't a GUI action — clear the middle action-SQL strip
-  // (its SQL is already in the editor right above).
-  setActionSql(session, null);
+  // (its SQL is already in the editor right above). An Explain is the
+  // exception: what ran is NOT what is in the editor, so show it.
+  setActionSql(session, opts.explain ? sql : null);
   if (panelRoot) {
     const root = panelRoot.querySelector("[data-results-root]");
     if (root) {
       clearChildren(root);
-      root.appendChild(el("p", { class: "tsql-empty", text: "Running…" }));
+      root.appendChild(
+        el("p", { class: "tsql-empty", text: opts.explain ? "Explaining…" : "Running…" }),
+      );
     }
   }
   try {
@@ -42,21 +85,23 @@ export async function runActiveQuery() {
       method: "POST",
       body: {
         conn: session.connId,
-        sql: session.sql,
+        sql,
         request_id: requestId,
-        // Active database context tracked from the schema tree. Sidecar
-        // runs USE <db> (MySQL) / SET search_path (Postgres) on a
-        // pinned pool connection so unqualified table names resolve
-        // even when the connection has no default_database pinned.
+        // Active database + schema context tracked from the schema tree.
+        // MySQL resolves unqualified names through `USE <database>`;
+        // PostgreSQL through `search_path`, which takes the SCHEMA (the
+        // database only selects which per-database pool answers).
         database: session.currentDatabase ?? undefined,
+        schema: session.currentSchema ?? undefined,
       },
     });
     session.result = resp;
+    // Record only what the server accepted, and only the user's own SQL —
+    // an Explain is a wrapper this module built, not something to replay.
+    if (!opts.explain) void record(session.connId, sql);
   } catch (err) {
     session.result = {
-      statements: [
-        { kind: "error", sql: session.sql, error: err?.message ?? String(err), elapsed_ms: 0 },
-      ],
+      statements: [{ kind: "error", sql, error: err?.message ?? String(err), elapsed_ms: 0 }],
     };
   } finally {
     session.requestId = null;
@@ -72,7 +117,16 @@ export async function cancelActiveQuery() {
   const session = state.sessions[state.active];
   if (!session?.requestId) return;
   try {
-    await fetchJson("/cancel", { method: "POST", body: { request_id: session.requestId } });
+    const resp = await fetchJson("/cancel", {
+      method: "POST",
+      body: { request_id: session.requestId },
+    });
+    // The helper drops its end of the socket either way; `server_canceled`
+    // tells us it also told the database to stop, which is what actually
+    // releases the locks a long UPDATE is holding.
+    if (resp?.canceled && !resp?.server_canceled) {
+      safeToast("Stopped waiting — the server may still be running the statement.", "warning");
+    }
   } catch (err) {
     safeToast(`Cancel failed: ${err?.message ?? err}`, "error");
   }

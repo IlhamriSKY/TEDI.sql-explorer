@@ -21,6 +21,8 @@ export const mysql = {
   urlScheme: "mysql",
   /** Identifier quote char; doubled when it appears inside an identifier. */
   quoteChar: "`",
+  /** Prefix that turns a statement into its execution plan. */
+  explainPrefix: "EXPLAIN ",
   /** TLS: how the `sslMode` form value maps onto the connection url. */
   ssl: {
     param: "ssl-mode",

@@ -34,7 +34,7 @@ export function buildTreeItems() {
   });
 }
 
-export function treeChildItems(parentId, connId) {
+function treeChildItems(parentId, connId) {
   const kids = treeChildren.get(parentId);
   if (!kids || kids.length === 0) return [];
   const parent = parseNid(parentId);

@@ -160,7 +160,8 @@ function rowMatches(row, needle) {
     let s;
     if (typeof cell === "string") s = cell;
     else if (typeof cell === "number" || typeof cell === "boolean") s = String(cell);
-    else if (typeof cell === "object" && cell.__type === "bytes") continue;
+    else if (typeof cell === "object" && (cell.__type === "bytes" || cell.__type === "unsupported"))
+      continue;
     else s = JSON.stringify(cell);
     if (s.toLowerCase().includes(needle)) return true;
   }

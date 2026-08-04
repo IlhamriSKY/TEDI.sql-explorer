@@ -17,4 +17,5 @@ export * from "./dom/tooltip.js";
 export * from "./dom/inputs.js";
 export * from "./dom/menus.js";
 export * from "./dom/button.js";
+export * from "./dom/dateParts.js";
 export * from "./dom/datePicker.js";

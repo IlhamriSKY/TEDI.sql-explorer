@@ -5,10 +5,11 @@
 // sidebar as a lazy tree (connection → database → [schema] → table). This module
 // owns the raw data; tree/items renders it and tree/view wires interaction.
 import { connectWithRetry, ensureSession } from "../connections.js";
+import { getDialect } from "../dialects/index.js";
 import { state } from "../runtime.js";
 import { ensureSidecar, fetchJson } from "../sidecar.js";
 
-export const TREE_SEP = "\x01"; // SOH control char; never appears in real identifiers
+const TREE_SEP = "\x01"; // SOH control char; never appears in real identifiers
 /** Expanded node ids. */
 export const treeExpanded = new Set();
 /** Node ids currently loading their children. */
@@ -38,7 +39,12 @@ export async function ensureConnected(connId) {
 
 export async function treeLoadDatabases(connId) {
   const resp = await fetchJson(`/databases?conn=${encodeURIComponent(connId)}`);
-  const pinned = (state.connections.find((c) => c.id === connId) || {}).database;
+  const conn = state.connections.find((c) => c.id === connId) || {};
+  // A pinned database narrows the tree — except on engines where that field is
+  // the connection TARGET rather than a scope. On PostgreSQL it names the
+  // maintenance database, which is usually the empty `postgres` one, so
+  // filtering to it hid every database the user actually keeps data in.
+  const pinned = getDialect(conn.kind).databaseIsConnectTarget ? "" : conn.database;
   const dbs = pinned ? resp.databases.filter((d) => d.name === pinned) : resp.databases;
   return dbs.map((d) => ({ kind: "db", name: d.name }));
 }

@@ -13,8 +13,9 @@ import { COMMON_FUNCTIONS, COMMON_KEYWORDS, COMMON_TYPES } from "./sqlWords.js";
 
 export { COMMON_FUNCTIONS, COMMON_KEYWORDS, COMMON_TYPES };
 
-/** Registered engines, in the order they appear in the engine <select>. */
-export const DIALECTS = [mysql, postgres, sqlite];
+/** Registered engines, in the order they appear in the engine <select>.
+ *  Private: `listDialects()` is the accessor, so a caller can't reorder it. */
+const DIALECTS = [mysql, postgres, sqlite];
 
 const BY_ID = Object.fromEntries(DIALECTS.map((d) => [d.id, d]));
 
@@ -39,7 +40,7 @@ export function quoteIdent(dialect, name) {
 
 /** Map a `sslMode` form value onto the connection-url TLS query string. Empty
  *  for "none" or engines without TLS (SQLite). */
-export function sslParam(dialect, sslMode) {
+function sslParam(dialect, sslMode) {
   if (!sslMode || sslMode === "none" || !dialect.ssl) return "";
   const value = dialect.ssl.values[sslMode] ?? dialect.ssl.fallback;
   return `?${dialect.ssl.param}=${value}`;

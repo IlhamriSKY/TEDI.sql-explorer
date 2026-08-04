@@ -14,6 +14,7 @@ export const generic = {
   defaultPort: "",
   urlScheme: "",
   quoteChar: '"',
+  explainPrefix: "EXPLAIN ",
   ssl: null,
   keywords: [],
   functions: [],

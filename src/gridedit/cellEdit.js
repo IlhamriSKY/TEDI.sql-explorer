@@ -44,7 +44,8 @@ import { mountTypedEditor } from "./typedEditor.js";
 function editCell(td, spec) {
   const { original, colInfo, colName, table, connId, actionSession, resolvePkMap, writeBack } = spec;
   if (isBytesCell(original)) {
-    safeToast("Binary cells aren't editable inline yet.", "warning");
+    const what = original?.__type === "unsupported" ? `${original.pg_type} values` : "Binary cells";
+    safeToast(`${what} aren't editable inline yet.`, "warning");
     return;
   }
   const type = classifyColumnType(colInfo);
@@ -87,7 +88,7 @@ function editCell(td, spec) {
       return;
     }
     try {
-      await fetchJson("/table-update", {
+      const resp = await fetchJson("/table-update", {
         method: "POST",
         body: {
           conn: connId,
@@ -98,6 +99,16 @@ function editCell(td, spec) {
           values: { [colName]: next },
         },
       });
+      // A successful request that changed NOTHING is not a successful edit.
+      // The WHERE can miss because the row was deleted or changed elsewhere,
+      // or because the key we round-tripped isn't the key the row has. Saying
+      // "saved" and writing the value into the grid would hide that, leaving
+      // the user looking at an edit the database never made.
+      if (resp?.affected === 0) {
+        revert();
+        safeToast("No row matched — it may have changed. Reload the table.", "warning");
+        return;
+      }
       writeBack(next);
       td.replaceChildren(renderCellContent(next));
       setTooltipAttr(td, cellTooltip(next));

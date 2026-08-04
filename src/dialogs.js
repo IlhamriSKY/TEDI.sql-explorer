@@ -26,7 +26,7 @@ export function closeOpenDialogs() {
  * `{ body, close }`; the caller fills `body` with its content. Closes on the X
  * button, a backdrop click, or Escape. Only one form modal at a time.
  */
-export function openCenteredDialog({ title, width = 520, compact = false }) {
+export function openCenteredDialog({ title, width = 520, compact = false, onClose }) {
   // Mount on document.body (not panelRoot) so the modal centers on the whole
   // window and is never clipped by a short split-pane — matches host modals.
   const host = document.body;
@@ -66,6 +66,13 @@ export function openCenteredDialog({ title, width = 520, compact = false }) {
     // dismissing the modal by Escape / X / backdrop can't orphan it.
     closeAllSelectMenus();
     overlay.remove();
+    // Callers that mount something needing teardown (a CodeMirror view) can't
+    // otherwise see the X / Escape / backdrop paths, which don't run their code.
+    try {
+      onClose?.();
+    } catch (err) {
+      ctx?.logger?.warn?.("dialog onClose threw", err);
+    }
   };
   const onKey = (e) => {
     if (e.key === "Escape") {
@@ -89,7 +96,7 @@ export function openCenteredDialog({ title, width = 520, compact = false }) {
  * without disturbing the existing title/body layout. `onClose` runs on click;
  * pair it with the caller's own Esc / backdrop handling.
  */
-export function appendDialogClose(dialog, onClose) {
+function appendDialogClose(dialog, onClose) {
   dialog.classList.add("tsql-dialog-has-x");
   const btn = el("button", {
     class: "tsql-dialog-x tsql-dialog-x-corner",

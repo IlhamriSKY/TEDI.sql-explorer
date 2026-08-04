@@ -1,6 +1,6 @@
 [package]
 name = "tedi-sql-helper"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Sidecar SQL gateway for the tedi.sql-explorer extension (MySQL / PostgreSQL / SQLite)"
 license = "Apache-2.0"
@@ -34,6 +34,10 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 
 # Numeric / date support shared with sqlx feature flags above.
+# Row streaming: `/query` and `/export` read up to the row cap instead of
+# materialising the whole result set (already in the tree via sqlx / axum).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["serde"] }

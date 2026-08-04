@@ -6,7 +6,7 @@ import { disposePreviewEditors } from "../dialogs.js";
 import { appendIcon, clearChildren, closeAllSelectMenus, el, textBtn } from "../dom.js";
 import { openExportDialog } from "../export.js";
 import { renderTableGrid } from "../grid.js";
-import { cancelActiveQuery, renderQueryResult, runActiveQuery } from "../query.js";
+import { cancelActiveQuery, history, renderQueryResult, runActiveQuery } from "../query.js";
 import { ctx, panelRoot, state } from "../runtime.js";
 import { isReadOnly, sqlLanguageForSession } from "../sql.js";
 import { disposeActionSqlEditor, renderActionSqlStrip } from "./actionSql.js";
@@ -107,12 +107,25 @@ export function renderEditorAndResults(session) {
     { class: "tsql-toolbar" },
     textBtn("Run", "PlayIcon", {
       primary: true,
-      title: "Run query (Ctrl+Enter)",
+      title: "Run query (Ctrl+Enter). Highlight part of the editor to run only that.",
       onClick: () => runActiveQuery(),
+    }),
+    textBtn("Explain", "ListTreeIcon", {
+      title: "Show the execution plan for the selected (or only) statement",
+      onClick: () => runActiveQuery({ explain: true }),
     }),
     textBtn("Stop", "SquareIcon", {
       title: "Cancel current statement",
       onClick: () => cancelActiveQuery(),
+    }),
+    textBtn("History", "Clock01Icon", {
+      title: "Statements run on this connection",
+      onClick: () =>
+        history.openHistoryDialog(session, (sql) => {
+          session.sql = sql;
+          state.editorHandle?.setValue?.(sql);
+          void saveWorkbenchSession();
+        }),
     }),
     textBtn("Export", "Download01Icon", {
       title: "Export current result",

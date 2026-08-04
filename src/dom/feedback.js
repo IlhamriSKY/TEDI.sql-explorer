@@ -27,7 +27,9 @@ export async function copyToClipboard(text, label = "Copied") {
 export function cellText(value) {
   if (value == null) return "";
   if (typeof value === "object") {
-    if (value.__type === "bytes") return "";
+    // Internal markers carry no user-facing text; copying their JSON would
+    // paste `{"__type":"bytes",...}` into a spreadsheet.
+    if (value.__type === "bytes" || value.__type === "unsupported") return "";
     return JSON.stringify(value);
   }
   return String(value);

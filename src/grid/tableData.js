@@ -11,10 +11,13 @@ import { renderTableGrid } from "./tableGrid.js";
 
 export async function openTable(session, target, scrollIntoView = false) {
   session.activeTable = target;
-  // Opening a table also sets the active database context, so a
-  // subsequent free-form `SELECT * FROM …` in the query editor
-  // resolves against the same DB the user just clicked into.
+  // Opening a table also sets the active database + schema context, so a
+  // subsequent free-form `SELECT * FROM …` in the query editor resolves
+  // against the same place the user just clicked into. PostgreSQL needs the
+  // SCHEMA specifically — `search_path` holds schemas, so the database name
+  // resolves nothing there.
   session.currentDatabase = target.database;
+  session.currentSchema = target.schema;
   session.tableSnapshot = null;
   // Per-table grid state. Cleared on switch so the new table opens
   // unsorted with empty filter, rather than inheriting state from the
@@ -23,6 +26,9 @@ export async function openTable(session, target, scrollIntoView = false) {
   session.orderDir = "asc";
   session.gridSearch = "";
   session.gridSearchCol = "";
+  // Clicking a table is an explicit "show me this now", so re-count rather
+  // than trusting a cached total from the last time it was open.
+  invalidateRowCount(session);
   // Clicking a table is a GUI action: show the SELECT it runs in the middle
   // strip (loadTableRows refreshes it once the page/sort/filter is known).
   session.actionSql = buildSelectSql(session, target);
@@ -65,6 +71,19 @@ export async function loadTableRows(session, page) {
       if (Array.isArray(cols) && cols.length) body.search_columns = cols;
     }
   }
+  // `total` comes from a COUNT(*), which is a full scan on a large InnoDB
+  // table. Only the filter can change it, so ask for it when the filter (or
+  // the table) changed and reuse the cached number while the user is just
+  // paging. Without this, clicking through pages re-ran the count every time.
+  const t = session.activeTable;
+  const totalKey = `${t.database}.${t.schema}.${t.table}|${term}|${session.gridSearchCol ?? ""}`;
+  // Only a NUMBER counts as cached. The sidecar reports `null` when the count
+  // query itself failed, and caching that would mean never asking again.
+  const reuseTotal =
+    session._totalKey === totalKey && typeof session._total === "number"
+      ? session._total
+      : undefined;
+  body.want_total = reuseTotal === undefined;
   try {
     // Client-side timing: /table-rows doesn't return elapsed_ms today,
     // so we measure round-trip locally. Captures network + decode, which
@@ -73,7 +92,13 @@ export async function loadTableRows(session, page) {
     const resp = await fetchJson("/table-rows", { method: "POST", body });
     const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
     session.tableSnapshot = resp.result;
-    if (session.tableSnapshot) session.tableSnapshot.elapsed_ms = elapsedMs;
+    if (session.tableSnapshot) {
+      session.tableSnapshot.elapsed_ms = elapsedMs;
+      // Carry the cached count forward on a page flip; remember a fresh one.
+      if (reuseTotal !== undefined) session.tableSnapshot.total = reuseTotal;
+      else session._total = session.tableSnapshot.total;
+      session._totalKey = totalKey;
+    }
     // Update the autocomplete cache with the columns we just learned.
     // Subsequent keystrokes in the query editor immediately see them.
     if (resp.result?.columns?.length) {
@@ -101,6 +126,13 @@ export async function loadTableRows(session, page) {
   } catch (err) {
     safeToast(`Failed to load table: ${err?.message ?? err}`, "error");
   }
+}
+
+/** Forget the cached `COUNT(*)` so the next load re-counts. Call after an
+ *  insert / delete: the filter is unchanged, but the row count is not. */
+export function invalidateRowCount(session) {
+  session._totalKey = null;
+  session._total = undefined;
 }
 
 // Debounce holder for the keystroke-driven grid search. Module-level

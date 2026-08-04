@@ -35,11 +35,22 @@ function qualName(connId, t) {
   parts.push(qid(connId, t.table));
   return parts.join(".");
 }
+/** `"schema"."table"` quoted for the connection's engine. Exported for the
+ *  schema-tree context menu, which builds statements outside a session. */
+export function qualifiedTableName(connId, t) {
+  return qualName(connId, t);
+}
 function sqlLit(v) {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
-  if (typeof v === "object") return "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
+  if (typeof v === "object") {
+    // The grid's internal chips (a blob, a type the helper can't render) carry
+    // no literal the server would accept; emitting their JSON would paste
+    // `'{"__type":"bytes",...}'` into a copied INSERT.
+    if (v.__type === "bytes" || v.__type === "unsupported") return "NULL";
+    return "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
+  }
   return "'" + String(v).replace(/'/g, "''") + "'";
 }
 function whereFromPk(connId, pkMap) {
@@ -82,6 +93,40 @@ export function buildInsertSql(connId, t, values) {
 }
 
 const DESTRUCTIVE_REGEX = /\b(DROP\s+(DATABASE|SCHEMA|TABLE)|TRUNCATE\s+TABLE?|DROP\s+ROLE|GRANT\s+ALL)\b/i;
-export function containsDestructive(sql) {
-  return DESTRUCTIVE_REGEX.test(sql);
+
+/** Blank out comments and string literals so a keyword scan only sees real
+ *  SQL — `WHERE` inside a quoted value must not look like a WHERE clause, and
+ *  `-- DROP TABLE` in a comment must not look like a DROP. */
+function bareSql(sql) {
+  return String(sql ?? "")
+    .replace(/--[^\r\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/'(?:''|[^'])*'/g, "''");
+}
+
+/**
+ * Why running `sql` deserves a confirmation first, or null when it doesn't.
+ *
+ * Two kinds of statement earn one. The obvious kind removes a whole object
+ * (DROP / TRUNCATE / GRANT ALL). The second is the one that actually catches
+ * people out, and the reason phpMyAdmin asks: an `UPDATE` or `DELETE` with no
+ * `WHERE` reads like an edit and silently rewrites every row in the table.
+ *
+ * Ordinary reads and targeted writes run straight away — a confirmation on
+ * every Run would be noise, and noise is what gets clicked through.
+ */
+export function destructiveReason(sql) {
+  const clean = bareSql(sql);
+  if (DESTRUCTIVE_REGEX.test(clean)) {
+    return "This drops or empties a database object. That can't be undone.";
+  }
+  for (const stmt of clean.split(";")) {
+    const s = stmt.trim();
+    if (!/^(delete\s+from|update)\b/i.test(s)) continue;
+    if (/\bwhere\b/i.test(s)) continue;
+    return /^delete/i.test(s)
+      ? "This DELETE has no WHERE clause, so it removes every row in the table."
+      : "This UPDATE has no WHERE clause, so it rewrites every row in the table.";
+  }
+  return null;
 }

@@ -71,84 +71,59 @@ pub async fn run_export(
     // allow_writes the same way /query does, so a read-only connection
     // can't be used to mutate data through the export path.
     if let Some(raw) = &req.sql {
-        if !config.allow_writes && !crate::query::all_statements_read_only(raw) {
+        if !config.allow_writes && !crate::sqltext::all_statements_read_only(raw) {
             return Err(AppError::BadRequest(
                 "connection is read-only. Enable writes to export a non-read statement".into(),
             ));
         }
     }
-    let sql = build_sql(req)?;
-    // `format_output` re-escapes via `quote_ident`, so any table name is
-    // safe to pass through. Fall back to `rows` only for raw-SQL exports
-    // where the request didn't name a table at all.
-    let table_for_sql = req.table.as_deref().unwrap_or("rows");
-    // Identifier quoting + binary-literal syntax for the SQL export format
-    // depend on the engine.
+    // Identifier quoting + binary-literal syntax (both for the SELECT we build
+    // and for the SQL export format) depend on the engine.
     let dialect = match backend {
         Backend::Mysql(_) => SqlDialect::Mysql,
         Backend::Postgres(_) => SqlDialect::Postgres,
         Backend::Sqlite(_) => SqlDialect::Sqlite,
     };
+    let sql = build_sql(req, dialect)?;
+    // `format_output` re-escapes via `quote_ident`, so any table name is
+    // safe to pass through. Fall back to `rows` only for raw-SQL exports
+    // where the request didn't name a table at all.
+    let table_for_sql = req.table.as_deref().unwrap_or("rows");
 
-    match backend {
-        Backend::Mysql(pool) => {
-            let rows = sqlx::query(&sql).fetch_all(pool).await?;
-            let columns = rows
-                .first()
-                .map(|r| {
-                    r.columns()
-                        .iter()
-                        .map(|c| c.name().to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let limited: Vec<Vec<Value>> = rows
-                .iter()
-                .take(req.row_limit as usize)
-                .map(decode_mysql_row)
-                .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
-        }
-        Backend::Postgres(pool) => {
-            let rows = sqlx::query(&sql).fetch_all(pool).await?;
-            let columns = rows
-                .first()
-                .map(|r| {
-                    r.columns()
-                        .iter()
-                        .map(|c| c.name().to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let limited: Vec<Vec<Value>> = rows
-                .iter()
-                .take(req.row_limit as usize)
-                .map(decode_pg_row)
-                .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
-        }
-        Backend::Sqlite(pool) => {
-            let rows = sqlx::query(&sql).fetch_all(pool).await?;
-            let columns = rows
-                .first()
-                .map(|r| {
-                    r.columns()
-                        .iter()
-                        .map(|c| c.name().to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let limited: Vec<Vec<Value>> = rows
-                .iter()
-                .take(req.row_limit as usize)
-                .map(decode_sqlite_row)
-                .collect();
-            Ok(format_output(req.format, &columns, &limited, table_for_sql, dialect))
-        }
+    // Read up to `row_limit` rows, decoding as they arrive. `fetch_all` +
+    // `take(limit)` used to pull the entire table across the wire before
+    // discarding the tail, so exporting 5k rows out of a 20M-row table cost
+    // 20M rows of memory.
+    macro_rules! stream_rows {
+        ($pool:expr, $decode:path) => {{
+            use futures_util::StreamExt as _;
+            let mut stream = sqlx::query(&sql).fetch($pool);
+            let mut columns: Vec<String> = Vec::new();
+            let mut rows: Vec<Vec<Value>> = Vec::new();
+            while let Some(row) = stream.next().await {
+                let row = row?;
+                if rows.len() as u64 >= req.row_limit {
+                    break;
+                }
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                }
+                rows.push($decode(&row));
+            }
+            drop(stream);
+            (columns, rows)
+        }};
     }
+
+    let (columns, rows) = match backend {
+        Backend::Mysql(pool) => stream_rows!(pool, decode_mysql_row),
+        Backend::Postgres(pool) => stream_rows!(pool, decode_pg_row),
+        Backend::Sqlite(pool) => stream_rows!(pool, decode_sqlite_row),
+    };
+    Ok(format_output(req.format, &columns, &rows, table_for_sql, dialect))
 }
 
-fn build_sql(req: &ExportRequest) -> AppResult<String> {
+fn build_sql(req: &ExportRequest, dialect: SqlDialect) -> AppResult<String> {
     if let Some(sql) = &req.sql {
         return Ok(sql.clone());
     }
@@ -156,25 +131,29 @@ fn build_sql(req: &ExportRequest) -> AppResult<String> {
         .table
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("either `sql` or `table` required".into()))?;
-    // Identifiers are escape-and-quoted instead of allow-listed so names
-    // with hyphens / leading digits / non-ASCII still work. The presence of
-    // `database` vs `schema` selects the backend quoting style (MySQL
-    // backticks vs PG/SQLite double quotes).
-    if let Some(db) = &req.database {
-        return Ok(format!(
-            "SELECT * FROM {}.{}",
-            escape_mysql_ident(db)?,
-            escape_mysql_ident(table)?
-        ));
-    }
-    if let Some(sc) = &req.schema {
-        return Ok(format!(
-            "SELECT * FROM {}.{}",
-            escape_pg_ident(sc)?,
-            escape_pg_ident(table)?
-        ));
-    }
-    Ok(format!("SELECT * FROM {}", escape_pg_ident(table)?))
+    // Identifiers are escape-and-quoted instead of allow-listed so names with
+    // hyphens / leading digits / non-ASCII still work.
+    //
+    // Quoting follows the CONNECTION's engine. It used to be inferred from
+    // which field the caller happened to set — `database` meant MySQL
+    // backticks, `schema` meant double quotes — but the export dialog sends
+    // BOTH for an open table, so every PostgreSQL table export emitted
+    // backticks and died on "syntax error at or near `".
+    type Quoter = fn(&str) -> AppResult<String>;
+    let (qualifier, quote): (Option<&str>, Quoter) = match dialect {
+        // A MySQL "database" IS its schema; qualify with the database.
+        SqlDialect::Mysql => (req.database.as_deref(), escape_mysql_ident),
+        // PostgreSQL qualifies with the schema — the database is already
+        // decided by which connection pool runs this.
+        SqlDialect::Postgres => (req.schema.as_deref(), escape_pg_ident),
+        // SQLite has no schema level worth qualifying for a plain table read.
+        SqlDialect::Sqlite => (None, escape_pg_ident),
+    };
+    let table_sql = match qualifier.filter(|q| !q.is_empty()) {
+        Some(q) => format!("{}.{}", quote(q)?, quote(table)?),
+        None => quote(table)?,
+    };
+    Ok(format!("SELECT * FROM {table_sql}"))
 }
 
 fn format_output(

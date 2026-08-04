@@ -5,6 +5,8 @@
 //   editContext — resolveQueryEditContext (is a result inline-editable?)
 //   results     — renderQueryResult (render a /query response)
 //   run         — runActiveQuery, cancelActiveQuery
+//   history     — remember what ran + the History dialog
 export * from "./query/editContext.js";
 export * from "./query/results.js";
 export * from "./query/run.js";
+export * as history from "./query/history.js";

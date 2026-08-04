@@ -47,6 +47,10 @@ export const GRID_CSS = `
    strongest neutral border so it still pops without introducing color. */
 .tsql-cell-bool { color: var(--foreground); font-weight: 600; }
 .tsql-cell-bytes { color: var(--muted-foreground); font-family: var(--font-mono, monospace); display: inline-flex; align-items: center; gap: 3px; }
+/* A value whose type the helper can't render. Same muted chip as a blob, but
+   italic so it reads as "there is something here I can't show" rather than as
+   the cell's actual content. */
+.tsql-cell-unsupported { color: var(--muted-foreground); font-family: var(--font-mono, monospace); font-style: italic; display: inline-flex; align-items: center; gap: 3px; opacity: 0.8; }
 .tsql-grid-actions-col { width: 30px; }
 .tsql-cell-input { width: 100%; padding: 2px 6px; font-size: 11px; border: 1px solid var(--foreground); border-radius: var(--radius, 0); background: var(--background); color: var(--foreground); font-family: inherit; outline: none; box-sizing: border-box; }
 /* Typed cell editors: same chrome as the text input above, with per-type

@@ -150,14 +150,24 @@ pub async fn list_tables(
                     TableInfo {
                         name: r.try_get::<String, _>("table_name").unwrap_or_default(),
                         kind,
-                        rows: r.try_get::<i64, _>("table_rows").ok(),
+                        // `table_rows` is BIGINT UNSIGNED, which `i64` refuses
+                        // on some server/driver combinations; try both widths
+                        // before reporting "unknown".
+                        rows: r
+                            .try_get::<i64, _>("table_rows")
+                            .or_else(|_| r.try_get::<u64, _>("table_rows").map(|v| v as i64))
+                            .ok(),
                     }
                 })
                 .collect())
         }
         Backend::Postgres(pool) => {
+            // `relkind` is PostgreSQL's internal `"char"` type, NOT text:
+            // decoding it as a String fails, and the `unwrap_or_default()`
+            // below then made every relation look like a plain table — so a
+            // view was never reported as one. Cast it server-side.
             let rows = sqlx::query(
-                "SELECT c.relname AS name, c.relkind AS kind, c.reltuples::bigint AS rows \
+                "SELECT c.relname AS name, c.relkind::text AS kind, c.reltuples::bigint AS rows \
                  FROM pg_class c \
                  JOIN pg_namespace n ON n.oid = c.relnamespace \
                  WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','p') \
@@ -177,7 +187,10 @@ pub async fn list_tables(
                     TableInfo {
                         name: r.try_get::<String, _>("name").unwrap_or_default(),
                         kind,
-                        rows: r.try_get::<i64, _>("rows").ok(),
+                        // `reltuples` is -1 (not 0) for a relation that has
+                        // never been analysed, and a view has no estimate at
+                        // all. Report "unknown" rather than a negative count.
+                        rows: r.try_get::<i64, _>("rows").ok().filter(|n| *n >= 0),
                     }
                 })
                 .collect())
@@ -373,3 +386,25 @@ pub fn escape_mysql_ident(name: &str) -> AppResult<String> {
 pub fn escape_pg_ident(name: &str) -> AppResult<String> {
     escape_quoted_ident(name, '"')
 }
+
+// ------------------- Qualified table names --------------------------
+pub fn qualify_mysql(database: &str, table: &str) -> AppResult<String> {
+    Ok(format!(
+        "{}.{}",
+        escape_mysql_ident(database)?,
+        escape_mysql_ident(table)?
+    ))
+}
+
+pub fn qualify_pg(schema: &str, table: &str) -> AppResult<String> {
+    Ok(format!(
+        "{}.{}",
+        escape_pg_ident(schema)?,
+        escape_pg_ident(table)?
+    ))
+}
+
+pub fn qualify_sqlite(table: &str) -> AppResult<String> {
+    escape_pg_ident(table)
+}
+

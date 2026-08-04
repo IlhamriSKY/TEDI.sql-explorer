@@ -21,6 +21,7 @@ import {
   treeLoadingNodes,
 } from "./data.js";
 import { buildTreeItems } from "./items.js";
+import { openTreeContextMenu } from "./menu.js";
 
 /**
  * Publish the connection/schema tree into the host's left "Databases" sidebar
@@ -52,6 +53,16 @@ export function syncSidebarSection() {
       },
       onItemClick: (id) => onTreeClick(id),
       onItemToggle: (id) => void onTreeToggle(id),
+      // Per-node right-click menu (refresh one node, copy name, SELECT
+      // template, structure, truncate / drop). No-op on hosts that predate
+      // `onItemContextMenu`; they just show the native menu.
+      onItemContextMenu: (id, at) =>
+        openTreeContextMenu(id, at, {
+          render: syncSidebarSection,
+          toggle: onTreeToggle,
+          openTableNode: openTableFromTree,
+          openWorkbench: openWorkbenchTab,
+        }),
       onItemAction: (id, action) => {
         const conn = state.connections.find((c) => c.id === parseNid(id).connId);
         if (!conn) return;

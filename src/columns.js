@@ -78,9 +78,16 @@ export function classifyColumnType(colInfo) {
   return "text";
 }
 
-/** True iff the snapshot row value is a "binary chip" marker. */
+/** True for a value the grid shows as a chip rather than text: a binary blob,
+ *  or a type the helper could not render. Neither can be edited inline — there
+ *  is no text form to hand the editor, and committing would write the marker
+ *  object back as the cell's value. */
 export function isBytesCell(value) {
-  return value && typeof value === "object" && value.__type === "bytes";
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value.__type === "bytes" || value.__type === "unsupported")
+  );
 }
 
 /** Convert a server-side ISO timestamp to the format the matching HTML5

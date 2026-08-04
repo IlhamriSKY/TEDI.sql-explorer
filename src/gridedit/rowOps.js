@@ -1,10 +1,11 @@
-// SQL Explorer — gridedit/rowOps: row-level operations (delete, insert) and the
-// read-only Structure view. Writes are gated by the sidecar's allow_writes
-// classifier. Bundled into extension.js by build.mjs.
+// SQL Explorer — gridedit/rowOps: row-level operations (delete, insert).
+// Writes are gated by the sidecar's allow_writes classifier. The read-only
+// Structure view lives in ./structure.js. Bundled into extension.js by
+// build.mjs.
 import { classifyColumnType, ensurePkColumns, inputValueToIso, shortTypeLabel } from "../columns.js";
 import { openCenteredDialog, openConfirmDialog } from "../dialogs.js";
 import { createDatePicker, el, input, safeToast, select } from "../dom.js";
-import { loadTableRows } from "../grid.js";
+import { invalidateRowCount, loadTableRows } from "../grid.js";
 import { setActionSql } from "../render.js";
 import { fetchJson } from "../sidecar.js";
 import { buildDeleteSql, buildInsertSql, sqlLanguageForSession } from "../sql.js";
@@ -38,7 +39,7 @@ export async function deleteRowFromGrid(session, rowIdx) {
   });
   if (!ok) return;
   try {
-    await fetchJson("/table-delete", {
+    const resp = await fetchJson("/table-delete", {
       method: "POST",
       body: {
         conn: session.connId,
@@ -48,78 +49,19 @@ export async function deleteRowFromGrid(session, rowIdx) {
         pk: pkMap,
       },
     });
+    invalidateRowCount(session);
     await loadTableRows(session, snap.page);
     // Show the DELETE that ran (loadTableRows reset the strip to the SELECT).
     setActionSql(session, deleteSql);
+    // Zero rows matched means the WHERE missed, not that the delete worked.
+    if (resp?.affected === 0) {
+      safeToast("No row matched — it may already be gone.", "warning");
+      return;
+    }
     safeToast("Row deleted", "success");
   } catch (err) {
     safeToast(`Delete failed: ${err?.message ?? err}`, "error");
   }
-}
-
-/**
- * Read-only "Structure" view: the table's columns rendered as a metadata grid
- * (ordinal, name, type, nullability, key, default, extra) from the existing
- * /columns response — no DDL endpoint needed. Available on read-only
- * connections too.
- */
-export async function openStructureDialog(session) {
-  const target = session.activeTable;
-  if (!target) return;
-  const { body } = openCenteredDialog({
-    title: `Structure · ${target.table}`,
-    width: 660,
-  });
-  body.appendChild(el("p", { class: "tsql-empty", text: "Loading…" }));
-
-  let columns;
-  try {
-    await ensurePkColumns(session);
-    columns = session._pkCache?.columns;
-  } catch (err) {
-    body.replaceChildren(
-      el("p", { class: "tsql-error-text", text: `Failed to load structure: ${err?.message ?? err}` }),
-    );
-    return;
-  }
-  if (!Array.isArray(columns) || columns.length === 0) {
-    body.replaceChildren(el("p", { class: "tsql-empty", text: "No column metadata available." }));
-    return;
-  }
-
-  const wrap = el("div", { class: "tsql-grid-wrap tsql-structure-wrap" });
-  const table = el("table", { class: "tsql-grid tsql-structure-grid" });
-  const thead = el("thead");
-  const hr = el("tr");
-  for (const h of ["#", "Column", "Type", "Null", "Key", "Default", "Extra"]) {
-    hr.appendChild(el("th", { text: h }));
-  }
-  thead.appendChild(hr);
-  table.appendChild(thead);
-  const tbody = el("tbody");
-  columns.forEach((c, i) => {
-    const tr = el("tr");
-    const def = c.default_value == null ? "" : String(c.default_value);
-    const cells = [
-      String(c.ordinal ?? i + 1),
-      c.name,
-      c.full_type || c.data_type || "",
-      c.nullable === false ? "NO" : "YES",
-      c.is_primary ? "PRI" : "",
-      def,
-      c.is_auto_increment ? "auto_increment" : "",
-    ];
-    cells.forEach((textVal) => tr.appendChild(el("td", { text: textVal })));
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-
-  const summary = el("div", {
-    class: "tsql-structure-summary",
-    text: `${columns.length} column${columns.length === 1 ? "" : "s"}`,
-  });
-  body.replaceChildren(summary, wrap);
 }
 
 /**
@@ -267,6 +209,7 @@ export async function openInsertDialog(session) {
                 },
               });
               close();
+              invalidateRowCount(session);
               await loadTableRows(session, session.tableSnapshot?.page ?? 0);
               // Show the INSERT that ran (loadTableRows reset the strip to SELECT).
               setActionSql(

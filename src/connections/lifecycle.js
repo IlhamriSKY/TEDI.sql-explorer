@@ -1,8 +1,10 @@
 // SQL Explorer — connections/lifecycle: open/test a pool, save, delete, and
 // select (lazy connect-with-retry). Bundled into extension.js by build.mjs.
 import { buildConnectionUrl, getDialect } from "../dialects/index.js";
+import { releaseTunnel, resolveEndpoint } from "./tunnel.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { safeToast } from "../dom.js";
+import { history } from "../query.js";
 import { rerender, setTabState } from "../render.js";
 import { connStatus, ctx, state } from "../runtime.js";
 import { ensureSidecar, fetchJson, sleep } from "../sidecar.js";
@@ -20,10 +22,14 @@ import {
 
 export async function connectFromForm(form, { test = false } = {}) {
   await ensureSidecar();
+  // A tunnelled connection reaches the database through a loopback port the
+  // host forwards over SSH, so the URL is built against that, not the real
+  // host. No-op for a direct connection.
+  const endpoint = await resolveEndpoint(form);
   const body = {
     id: test ? `__test_${form.id}` : form.id,
     kind: form.kind,
-    url: buildConnectionUrl(getDialect(form.kind), form),
+    url: buildConnectionUrl(getDialect(form.kind), { ...form, ...endpoint }),
     allow_writes: form.allow_writes,
     query_timeout_ms: form.query_timeout_ms || 30000,
     row_limit: form.row_limit || 10000,
@@ -73,11 +79,17 @@ async function deleteConnection(id) {
   await persistConnections();
   // Wipe the stored password from the keychain (SQLite never stores one).
   if (conn && conn.kind !== "sqlite") await deleteSecret(id);
+  // Its query history is unreachable once the connection is gone; drop it so
+  // the setting doesn't grow a tail of orphaned entries.
+  await history.forgetConnection(id);
   try {
     await fetchJson("/disconnect", { method: "POST", body: { id } });
   } catch {
     /* silent: pool may not be open */
   }
+  // Drop the SSH forward too; otherwise the jump-host session outlives the
+  // connection that needed it.
+  if (conn) await releaseTunnel(conn);
   if (state.active === id) {
     state.active = null;
     setTabState("disconnected");

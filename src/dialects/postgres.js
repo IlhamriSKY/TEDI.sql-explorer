@@ -8,9 +8,17 @@ export const postgres = {
   shortLabel: "PostgreSQL",
   languageId: "sql:postgres",
   fileBased: false,
+  /** PostgreSQL binds ONE database per connection, so the connection's
+   *  `database` is the maintenance database it attaches to, not a filter: the
+   *  tree still lists every database on the server (pgAdmin / DBeaver both do
+   *  this). MySQL has no such split, so there the field narrows the tree. */
+  databaseIsConnectTarget: true,
   defaultPort: "5432",
   urlScheme: "postgres",
   quoteChar: '"',
+  // Plain EXPLAIN, never ANALYZE: ANALYZE actually RUNS the statement, which
+  // would make "show me the plan" execute a DELETE.
+  explainPrefix: "EXPLAIN ",
   ssl: {
     param: "sslmode",
     fallback: "require",

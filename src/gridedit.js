@@ -6,7 +6,9 @@
 // barrel re-exports the submodules so callers keep importing from "./gridedit.js".
 //   typedEditor — mountTypedEditor (shared typed inline-edit widget)
 //   cellEdit    — beginQueryCellEdit, beginCellEdit (inline single-cell UPDATE)
-//   rowOps      — deleteRowFromGrid, openInsertDialog, openStructureDialog
+//   rowOps      — deleteRowFromGrid, openInsertDialog
+//   structure   — openStructureDialog (columns / indexes / FKs / DDL)
 export * from "./gridedit/typedEditor.js";
 export * from "./gridedit/cellEdit.js";
 export * from "./gridedit/rowOps.js";
+export * from "./gridedit/structure.js";

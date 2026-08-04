@@ -23,6 +23,12 @@
  * @property {string} defaultPort   Port field placeholder ("" when file-based).
  * @property {string} urlScheme     sqlx connection-url scheme.
  * @property {string} quoteChar     Identifier quote char (doubled when nested).
+ * @property {string} explainPrefix Prefix that turns a statement into its
+ *   execution plan. Must never be an ANALYZE form: that RUNS the statement.
+ * @property {boolean} [databaseIsConnectTarget] The connection's `database` is
+ *   the database it attaches to (PostgreSQL's maintenance database) rather than
+ *   a filter, so the tree still lists every database on the server. Omit for
+ *   engines where the field narrows scope.
  * @property {DialectSsl|null} ssl  TLS url mapping, or null when unsupported.
  * @property {string[]} keywords    Engine-specific autocomplete keywords.
  * @property {string[]} functions   Engine-specific autocomplete functions.

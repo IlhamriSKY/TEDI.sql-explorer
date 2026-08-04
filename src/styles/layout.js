@@ -76,10 +76,25 @@ export const LAYOUT_CSS = `
    dialog's Cancel reading as plain text with nothing to aim at. Anything in a
    modal footer that is not THE primary action wears this instead, so a footer
    reads as one filled action plus bordered alternatives rather than two
-   identical blue buttons. --tedi-button-border is the host's own outline-button
-   token (already held to WCAG's 3:1 for a control boundary); --border is the
-   fallback for hosts that predate it. */
-.tsql-btn.is-outline { border-color: var(--tedi-button-border, var(--border)); color: var(--foreground); }
+   identical blue buttons.
+
+   The border is DERIVED FROM --foreground rather than read from the host's
+   --tedi-button-border token, and that is deliberate. That token carries
+   whatever the user's saved theme holds, a theme snapshots its palette when it
+   is picked, and older snapshots hold a hairline tuned to separate panels
+   rather than to draw a control: measured #3a3a3a on a #363636 dialog is
+   1.06:1, i.e. invisible. The host repairs that on load from TEDI 0.4.10, but
+   an extension cannot assume the host version, and a button nobody can see is
+   worse than one that ignores a colour preference.
+
+   75%, not the 50% TEDI's own :root fallback uses: .is-outline appears ONLY in
+   a dialog footer, so --popover is the one surface it lands on, and measured
+   across all nine presets x light/dark, 50% bottoms out at 2.08:1 (Kanagawa
+   light, whose popover sits close to its foreground) while 75% bottoms out at
+   3.29:1 and so clears the 3:1 WCAG floor for a control boundary everywhere.
+   Deriving it from the text colour is what makes that hold in any theme: the
+   foreground already has to be readable on that surface. */
+.tsql-btn.is-outline { border-color: color-mix(in srgb, var(--foreground) 75%, transparent); color: var(--foreground); }
 .tsql-btn.is-outline:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.1))); }
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-primary:hover:not([disabled]) { background: color-mix(in srgb, var(--primary, #3b82f6) 80%, transparent); }

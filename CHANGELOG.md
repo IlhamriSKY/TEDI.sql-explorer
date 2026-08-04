@@ -2,6 +2,27 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.1] - 2026-08-04
+
+### Fixed
+
+- **The bordered dialog buttons in 0.6.0 were still invisible.** Cancel and Test
+  stopped being filled blue but gained no border anyone could see, because the
+  border read TEDI's `--tedi-button-border` token and that token carries
+  whatever the user's SAVED theme holds. A theme snapshots its palette when it
+  is picked, and older snapshots hold a hairline tuned to separate panels rather
+  than to draw a control: measured on a real install, `#3a3a3a` on a `#363636`
+  dialog is 1.06:1. TEDI repairs that on load from 0.4.10, but an extension
+  cannot assume the host version. The border is now derived from `--foreground`
+  instead, which cannot be invisible on a surface the text is already readable
+  on. 75% of it, measured across all nine presets in light and dark, bottoms out
+  at 3.29:1 and so clears the WCAG floor for a control boundary everywhere.
+- **The searchable dropdown looked nothing like TEDI's own.** The filter was a
+  plain bordered input that lit up with a loud blue outline on focus, sitting
+  inside the popup rather than reading as part of it. It now wears the same
+  chrome as the host's search fields: a filled box with a transparent border
+  that turns ring-coloured on focus, and a search glyph on the left.
+
 ## [0.6.0] - 2026-08-04
 
 Connections move between machines, and the dialogs say which button is the one

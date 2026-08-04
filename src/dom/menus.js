@@ -172,6 +172,11 @@ export function select(options, current, onChange, opts = {}) {
     let emptyRow = null;
     if (opts.searchable) {
       const head = el("li", { class: "tsql-select-search", attrs: { role: "presentation" } });
+      // Glyph + borderless input inside one filled box, matching the host's
+      // CommandInput. The icon is decorative: the input carries the aria-label.
+      const box = el("div", { class: "tsql-select-search-box" });
+      const icon = el("span", { class: "tsql-select-search-icon", attrs: { "aria-hidden": "true" } });
+      appendIcon(icon, "lucide:Search", { size: 12, strokeWidth: 2 });
       searchInput = el("input", {
         attrs: {
           type: "text",
@@ -181,7 +186,9 @@ export function select(options, current, onChange, opts = {}) {
           spellcheck: "false",
         },
       });
-      head.appendChild(searchInput);
+      box.appendChild(icon);
+      box.appendChild(searchInput);
+      head.appendChild(box);
       menu.appendChild(head);
       emptyRow = el("li", { class: "tsql-select-empty", text: "No match." });
     }

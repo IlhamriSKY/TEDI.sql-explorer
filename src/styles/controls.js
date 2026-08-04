@@ -110,12 +110,19 @@ export const CONTROLS_CSS = `
 .tsql-select-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-select-item-check { margin-left: auto; flex-shrink: 0; color: var(--primary, #3b82f6); }
 .tsql-select-item.is-selected { color: var(--foreground); font-weight: 600; }
-/* Filter box for a searchable dropdown (opts.searchable). Sticky so it stays
-   put while a long host list scrolls under it; the menu's own 6px padding is
-   cancelled on the sides so the input spans the popup edge to edge. */
-.tsql-select-search { position: sticky; top: -6px; z-index: 1; margin: -6px -6px 4px; padding: 6px; background: inherit; border-bottom: 1px solid var(--border); }
-.tsql-select-search input { width: 100%; box-sizing: border-box; height: 26px; padding: 0 8px; font: inherit; color: var(--foreground); background: var(--input, transparent); border: 1px solid var(--border); border-radius: var(--radius, 0); outline: none; }
-.tsql-select-search input:focus { border-color: var(--ring, var(--primary, #3b82f6)); }
+/* Filter box for a searchable dropdown (opts.searchable). Mirrors the host's
+   own search chrome (CommandInput in the SSH jump-host picker, and the sidebar
+   section search): a FILLED --input box at 50% with a transparent border that
+   turns ring-coloured on focus, and a search glyph on the left. Not a plain
+   bordered input, which read as a loud blue-outlined field sitting inside the
+   popup instead of part of it. Sticky so it stays put while a long host list
+   scrolls under it. */
+.tsql-select-search { position: sticky; top: -6px; z-index: 1; margin: -6px -6px 4px; padding: 6px; background: inherit; }
+.tsql-select-search-box { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius, 0); background: color-mix(in srgb, var(--input, #3f3f3f) 50%, transparent); transition: border-color 0.12s ease; }
+.tsql-select-search-box:focus-within { border-color: var(--ring, var(--primary, #3b82f6)); }
+.tsql-select-search-icon { display: inline-flex; flex-shrink: 0; color: var(--muted-foreground); opacity: 0.7; }
+.tsql-select-search input { flex: 1 1 auto; min-width: 0; padding: 0; font: inherit; color: var(--foreground); background: transparent; border: 0; outline: none; }
+.tsql-select-search input::placeholder { color: var(--muted-foreground); }
 .tsql-select-empty { padding: 10px; text-align: center; color: var(--muted-foreground); }
 
 /* Right-click context menu (grid copy actions); shares the popover chrome of

@@ -2,6 +2,59 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.0] - 2026-08-04
+
+Connections move between machines, and the dialogs say which button is the one
+that finishes them. Needs TEDI 0.4.10.
+
+### Added
+
+- **Every saved connection exports and imports as one encrypted file.** Moving
+  to another machine meant retyping every host, port, user and password by hand,
+  and there was no backup at all. The two new buttons in the Databases header
+  write and read a `.tedi-sql` file, encrypted with a passphrase you choose. The
+  passwords live in the OS keychain and cannot travel with the settings file on
+  their own, which is exactly why this exists and why the file is never plain:
+  it carries database credentials, so an unencrypted export would leak them the
+  moment it touched a Downloads or synced folder. Sealing runs in the TEDI host
+  process, because `crypto.subtle` is secure-context only and the app origin is
+  plain http.
+- **An import is re-validated before anything is written.** The file came off a
+  USB stick or a chat and what survives the parser gets DIALLED, so nothing is
+  taken on faith: an unknown engine, a record with no id, one with nothing to
+  connect to, an out-of-range port, a junk TLS mode and a truthy-string write
+  flag (which would otherwise grant writes) are each dropped or coerced.
+  Connections merge by id, so re-importing the same file updates rather than
+  duplicating, and nothing already saved is deleted. Two states that would
+  otherwise only surface at the next connect attempt are reported instead: a
+  connection whose password did not travel, and an SSH tunnel naming a host that
+  is not saved on this machine, which falls back to a direct connection.
+- **The SSH tunnel picker searches.** The list was every saved host in click
+  order, which is fine at three and useless at thirty. It now filters as you
+  type, on the host's name AND its `user@host:port`, and Enter takes the first
+  match. Matches the jump-host picker in TEDI's own SSH dialog.
+
+### Changed
+
+- **A dialog footer has one button that finishes it.** New connection showed
+  Cancel as bare text with no border to aim at, and Test and Add as two
+  identical filled blue buttons, so nothing said which one completes the dialog.
+  Cancel and Test are now bordered secondaries and only Add (or Save) is filled.
+  The same bordered treatment reaches the Export, Insert row and Query history
+  footers, which had the same invisible Cancel.
+- **One pencil, one red trash.** Editing a connection from the row and from the
+  right-click menu used two different glyphs, and Drop table used a third for
+  delete. Rename is the pencil, delete is the trash, and a destructive row or
+  menu item is red at rest rather than only under the pointer, matching the rest
+  of TEDI.
+
+### Fixed
+
+- **The confirm dialog's Cancel stayed invisible after the rest were fixed.** A
+  leftover rule scoped to that dialog carried five classes to the new outline
+  variant's two, so it silently won and put the button back on the panel-hairline
+  border, about 1.1:1 against a dark surface. The rule is gone.
+
 ## [0.5.0] - 2026-08-04
 
 Correctness and coverage pass over the workbench, focused on MySQL and

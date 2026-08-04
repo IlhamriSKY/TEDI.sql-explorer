@@ -137,10 +137,14 @@ export async function openConnectionDialog(existing) {
                 ...sshHosts.map((h) => ({
                   value: h.id,
                   label: `${h.name || h.host} (${h.user}@${h.host})`,
+                  // Findable by address as well as by name, matching the host's
+                  // own jump-host combobox in the SSH dialog.
+                  keywords: `${h.user}@${h.host}:${h.port ?? ""} ${h.id}`,
                 })),
               ],
               form.sshTunnel,
               (v) => (form.sshTunnel = v),
+              { searchable: true, searchPlaceholder: "Search saved hosts…" },
             )
           : el("span", {
               class: "tsql-label-type",
@@ -221,7 +225,7 @@ export async function openConnectionDialog(existing) {
     "div",
     { class: "tsql-dialog-actions" },
     el("button", {
-      class: "tsql-btn",
+      class: "tsql-btn is-outline",
       text: "Cancel",
       attrs: { type: "button" },
       on: {
@@ -229,7 +233,10 @@ export async function openConnectionDialog(existing) {
       },
     }),
     el("button", {
-      class: "tsql-btn is-primary",
+      // Secondary, NOT primary: Test and Add were the same filled blue, so the
+      // footer offered two equally-loud actions and neither read as the one
+      // that finishes the dialog.
+      class: "tsql-btn is-outline",
       text: "Test",
       attrs: { type: "button" },
       on: {

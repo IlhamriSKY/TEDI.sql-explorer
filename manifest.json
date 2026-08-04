@@ -1,7 +1,7 @@
 {
   "id": "tedi.sql-explorer",
   "name": "SQL Explorer",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Browses and queries MySQL, PostgreSQL, and SQLite databases: schema tree with a per-node menu, query editor with run-selection / explain / history, inline row edit, indexes + foreign keys + DDL, and CSV / JSON / SQL export. Toggle with Ctrl+Alt+D.",
   "author": "IlhamRiski - ilhamriski.com",
   "homepage": "https://tedi.ilhamriski.com/",
@@ -17,6 +17,8 @@
     "secrets:read",
     "secrets:write",
     "ssh:connections",
+    "invoke:backup_seal",
+    "invoke:backup_open",
     "invoke:shell_bg_spawn_direct",
     "invoke:shell_bg_logs",
     "invoke:shell_bg_kill"
@@ -51,6 +53,6 @@
     ]
   },
   "engines": {
-    "tedi": ">=0.3.37"
+    "tedi": ">=0.4.9"
   }
 }

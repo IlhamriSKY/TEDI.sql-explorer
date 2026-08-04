@@ -184,7 +184,7 @@ export function openConfirmDialog({
 
     const actions = el("div", { class: "tsql-dialog-actions" });
     const cancelBtn = el("button", {
-      class: "tsql-btn",
+      class: "tsql-btn is-outline",
       attrs: { type: "button" },
       text: cancelLabel,
       on: { click: () => finish(false) },

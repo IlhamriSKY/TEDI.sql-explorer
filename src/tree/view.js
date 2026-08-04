@@ -4,6 +4,8 @@ import {
   confirmAndDeleteConnection,
   ensureSession,
   openConnectionDialog,
+  openExportConnectionsDialog,
+  openImportConnectionsDialog,
   selectConnection,
 } from "../connections.js";
 import { safeToast } from "../dom.js";
@@ -38,6 +40,10 @@ export function syncSidebarSection() {
       icon: "lucide:Database",
       headerActions: [
         { id: "add", icon: "lucide:Plus", tooltip: "New connection" },
+        // Download = bring a file IN, Upload = send one OUT. Same pairing (and
+        // same glyphs) as the SSH manager and the API Client sidebar.
+        { id: "import", icon: "lucide:Download", tooltip: "Import connections (.tedi-sql)" },
+        { id: "export", icon: "lucide:Upload", tooltip: "Export connections (.tedi-sql)" },
         { id: "refresh", icon: "lucide:RefreshCw", tooltip: "Reload tree" },
       ],
       items: buildTreeItems(),
@@ -49,6 +55,8 @@ export function syncSidebarSection() {
       movableToRight: true,
       onHeaderAction: (a) => {
         if (a === "add") void openConnectionDialog();
+        else if (a === "import") void openImportConnectionsDialog(reloadTree);
+        else if (a === "export") void openExportConnectionsDialog();
         else if (a === "refresh") reloadTree();
       },
       onItemClick: (id) => onTreeClick(id),

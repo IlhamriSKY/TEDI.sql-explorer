@@ -76,6 +76,11 @@ export function trackFloatingMenu(closeFn) {
  * menu closes WITHOUT a pick (outside-click / Escape / programmatic close) —
  * used by the inline cell editor to revert when the user dismisses the dropdown
  * without choosing. Both are optional, so existing 3-arg callers are unchanged.
+ *
+ * `opts.searchable` puts a filter box at the top of the popup and focuses it on
+ * open, matching the host's own saved-host picker (the SSH dialog's jump host is
+ * a cmdk combobox). Options may carry a `keywords` string so a host is findable
+ * by `user@host:port` and not just by the name shown on the row.
  */
 export function select(options, current, onChange, opts = {}) {
   let value = current;
@@ -160,11 +165,43 @@ export function select(options, current, onChange, opts = {}) {
     menu.style.minWidth = `${Math.max(rect.width, 200)}px`;
     menu.style.zIndex = "10000";
 
+    // Filter box. Rows are built once and hidden/shown, so a pick keeps working
+    // through whatever is on screen and there is no re-render to lose focus to.
+    const rows = [];
+    let searchInput = null;
+    let emptyRow = null;
+    if (opts.searchable) {
+      const head = el("li", { class: "tsql-select-search", attrs: { role: "presentation" } });
+      searchInput = el("input", {
+        attrs: {
+          type: "text",
+          placeholder: opts.searchPlaceholder ?? "Search…",
+          "aria-label": opts.searchPlaceholder ?? "Search",
+          autocomplete: "off",
+          spellcheck: "false",
+        },
+      });
+      head.appendChild(searchInput);
+      menu.appendChild(head);
+      emptyRow = el("li", { class: "tsql-select-empty", text: "No match." });
+    }
+    const applyFilter = () => {
+      const q = (searchInput?.value ?? "").trim().toLowerCase();
+      let shown = 0;
+      for (const { item, haystack } of rows) {
+        const hit = !q || haystack.includes(q);
+        item.style.display = hit ? "" : "none";
+        if (hit) shown++;
+      }
+      if (emptyRow) emptyRow.style.display = shown === 0 ? "" : "none";
+    };
+
     for (const opt of options) {
       const item = el("li", {
         class: `tsql-select-item${opt.value === value ? " is-selected" : ""}`,
         attrs: { role: "option", "data-value": opt.value },
       });
+      rows.push({ item, haystack: `${opt.label} ${opt.keywords ?? ""}`.toLowerCase() });
       item.appendChild(el("span", { class: "tsql-select-item-label", text: opt.label }));
       if (opt.value === value) {
         const check = el("span", { class: "tsql-select-item-check" });
@@ -186,12 +223,29 @@ export function select(options, current, onChange, opts = {}) {
       });
       menu.appendChild(item);
     }
+    if (emptyRow) {
+      menu.appendChild(emptyRow);
+      applyFilter();
+    }
+    if (searchInput) {
+      searchInput.addEventListener("input", applyFilter);
+      searchInput.addEventListener("keydown", (e) => {
+        // Enter takes the first row still on screen, so a filter that narrows to
+        // one host is pickable without reaching for the mouse. Escape and Tab
+        // stay with the document handler that closes the menu.
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        rows.find((r) => r.item.style.display !== "none")?.item.click();
+      });
+    }
 
     document.body.appendChild(menu);
     placeFloating(menu, rect);
     trigger.setAttribute("aria-expanded", "true");
     isOpen = true;
     openSelectMenus.add(closeMenu);
+    // Focus AFTER mounting; an unattached input cannot take focus.
+    searchInput?.focus();
     // Defer listener attach so the click that opened us doesn't immediately close.
     requestAnimationFrame(() => {
       document.addEventListener("mousedown", onDocMouseDown, true);
@@ -244,7 +298,12 @@ export function openContextMenu(event, items) {
       menu.appendChild(el("li", { class: "tsql-context-sep", attrs: { role: "separator" } }));
       continue;
     }
-    const li = el("li", { class: "tsql-context-item", attrs: { role: "menuitem" } });
+    // `danger: true` paints the row like the host's destructive ContextMenuItem
+    // (red label + red glyph at rest, red-tinted bg on hover).
+    const li = el("li", {
+      class: `tsql-context-item${it.danger ? " is-danger" : ""}`,
+      attrs: { role: "menuitem" },
+    });
     if (it.icon) {
       const ico = el("span", { class: "tsql-context-icon" });
       appendIcon(ico, it.icon, { size: 13, strokeWidth: 2 });

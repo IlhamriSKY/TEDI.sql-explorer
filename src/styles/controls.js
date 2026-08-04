@@ -71,7 +71,12 @@ export const CONTROLS_CSS = `
    Cancel + a filled (destructive) action. */
 .tsql-dialog-confirm .tsql-dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 0; }
 .tsql-dialog-confirm .tsql-dialog-actions .tsql-btn { width: 100%; justify-content: center; height: 36px; }
-.tsql-dialog-confirm .tsql-dialog-actions .tsql-btn:not(.is-primary):not(.is-destructive) { border-color: var(--border); }
+/* No border-colour rule here on purpose. The confirm footer's Cancel now
+   carries .is-outline like every other dialog's, and a
+   :not(.is-primary):not(.is-destructive) override would out-specify it
+   (5 classes vs 2) and quietly put the button back on --border, which sits
+   ~1.1:1 against a dark popover - the very hairline .is-outline exists to
+   avoid. */
 .tsql-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 14px; }
 .tsql-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--muted-foreground); min-width: 0; }
 .tsql-field.is-full { grid-column: 1 / -1; }
@@ -105,6 +110,13 @@ export const CONTROLS_CSS = `
 .tsql-select-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-select-item-check { margin-left: auto; flex-shrink: 0; color: var(--primary, #3b82f6); }
 .tsql-select-item.is-selected { color: var(--foreground); font-weight: 600; }
+/* Filter box for a searchable dropdown (opts.searchable). Sticky so it stays
+   put while a long host list scrolls under it; the menu's own 6px padding is
+   cancelled on the sides so the input spans the popup edge to edge. */
+.tsql-select-search { position: sticky; top: -6px; z-index: 1; margin: -6px -6px 4px; padding: 6px; background: inherit; border-bottom: 1px solid var(--border); }
+.tsql-select-search input { width: 100%; box-sizing: border-box; height: 26px; padding: 0 8px; font: inherit; color: var(--foreground); background: var(--input, transparent); border: 1px solid var(--border); border-radius: var(--radius, 0); outline: none; }
+.tsql-select-search input:focus { border-color: var(--ring, var(--primary, #3b82f6)); }
+.tsql-select-empty { padding: 10px; text-align: center; color: var(--muted-foreground); }
 
 /* Right-click context menu (grid copy actions); shares the popover chrome of
    the select dropdown. */
@@ -114,6 +126,11 @@ export const CONTROLS_CSS = `
 .tsql-context-icon { flex-shrink: 0; display: inline-flex; color: var(--muted-foreground); }
 .tsql-context-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tsql-context-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+/* Destructive rows (Delete connection, Drop table). Mirrors the host's
+   ContextMenuItem variant="destructive": red label AND red glyph at rest so the
+   row is avoidable before the pointer lands on it, red-tinted bg on hover. */
+.tsql-context-item.is-danger, .tsql-context-item.is-danger .tsql-context-icon { color: var(--destructive, #ef4444); }
+.tsql-context-item.is-danger:hover, .tsql-context-item.is-danger:focus-visible { background: color-mix(in srgb, var(--destructive, #ef4444) 12%, transparent); color: var(--destructive, #ef4444); }
 
 /* Read-only Structure dialog: a scrollable metadata grid + a count summary. */
 .tsql-structure-summary { margin: 0 0 8px; font-size: 11px; color: var(--muted-foreground); }

@@ -180,7 +180,7 @@ export async function openInsertDialog(session) {
       "div",
       { class: "tsql-dialog-actions" },
       el("button", {
-        class: "tsql-btn",
+        class: "tsql-btn is-outline",
         text: "Cancel",
         attrs: { type: "button" },
         on: { click: close },

@@ -159,7 +159,8 @@ function tableItems(m, view) {
       },
       {
         label: "Drop table",
-        icon: "Delete02Icon",
+        icon: "lucide:Trash2",
+        danger: true,
         onClick: () =>
           void confirmAndRun(m, view, {
             verb: "DROP TABLE",
@@ -181,14 +182,18 @@ function menuItemsFor(m, id, view) {
     return [
       { label: "Refresh", icon: "Refresh01Icon", onClick: () => refreshNode(id, view) },
       {
+        // Same glyphs the connection ROW's hover actions use (tree/items.js),
+        // so "rename this thing" is one pencil and "delete it" is one red trash
+        // everywhere in TEDI - menu and row alike.
         label: "Edit connection",
-        icon: "Edit02Icon",
+        icon: "lucide:Pencil",
         onClick: () => void openConnectionDialog(conn),
       },
       { separator: true },
       {
         label: "Delete connection",
-        icon: "Delete02Icon",
+        icon: "lucide:Trash2",
+        danger: true,
         onClick: () => void confirmAndDeleteConnection(conn),
       },
     ];

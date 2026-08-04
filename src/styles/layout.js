@@ -29,13 +29,13 @@ export const LAYOUT_CSS = `
    hover-revealed reload / edit / delete actions in the trailing grid cell. */
 .tsql-row-action { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; border-radius: var(--radius, 0); display: inline-flex; align-items: center; justify-content: center; outline: none; transition: background-color 0.12s ease, color 0.12s ease; }
 .tsql-row-action:hover { background: var(--muted, var(--accent, rgba(127,127,127,0.12))); color: var(--foreground); }
-/* Destructive variant for delete / trash row actions. Rest sits at the
-   same muted neutral as the regular action so the row doesn't scream
-   "danger" until the user actually targets it; on hover the bg lifts
-   to a 10% --destructive tint and the icon shifts to --destructive,
-   matching the host's pattern (text-muted-foreground
-   hover:bg-destructive/10 hover:text-destructive) used in Settings,
-   WorkspacesPanel, ExplorerGrep, SSH menu, etc. */
+/* Destructive variant for delete / trash row actions. Red AT REST (75%
+   opacity so it doesn't shout in a list of neutral row actions), full
+   --destructive on hover - matching the host's DESTRUCTIVE_ACTION
+   (src/lib/toolbarButton.ts) used by Settings, WorkspacesPanel, the SSH
+   menu and the extension sidebar rows. A delete has to be findable, and
+   avoidable, before the pointer is on it. */
+.tsql-row-action.is-danger { color: color-mix(in srgb, var(--destructive, #ef4444) 75%, transparent); }
 .tsql-row-action.is-danger:hover { background: color-mix(in srgb, var(--destructive, #ef4444) 12%, transparent); color: var(--destructive, #ef4444); }
 .tsql-row-action.is-danger:focus-visible { color: var(--destructive, #ef4444); outline: 1px solid var(--destructive, #ef4444); outline-offset: -1px; }
 
@@ -71,6 +71,16 @@ export const LAYOUT_CSS = `
 .tsql-btn:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); color: var(--foreground); }
 .tsql-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 .tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+/* Outline (secondary) button. The bare .tsql-btn is a GHOST - transparent bg
+   AND a transparent border - which is right for a toolbar icon but leaves a
+   dialog's Cancel reading as plain text with nothing to aim at. Anything in a
+   modal footer that is not THE primary action wears this instead, so a footer
+   reads as one filled action plus bordered alternatives rather than two
+   identical blue buttons. --tedi-button-border is the host's own outline-button
+   token (already held to WCAG's 3:1 for a control boundary); --border is the
+   fallback for hosts that predate it. */
+.tsql-btn.is-outline { border-color: var(--tedi-button-border, var(--border)); color: var(--foreground); }
+.tsql-btn.is-outline:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.1))); }
 .tsql-btn.is-primary { background: var(--primary, #3b82f6); color: var(--primary-foreground, #fff); border-color: transparent; }
 .tsql-btn.is-primary:hover:not([disabled]) { background: color-mix(in srgb, var(--primary, #3b82f6) 80%, transparent); }
 .tsql-btn.is-primary:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }

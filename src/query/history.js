@@ -134,7 +134,7 @@ export async function openHistoryDialog(session, onPick) {
       "div",
       { class: "tsql-dialog-actions" },
       el("button", {
-        class: "tsql-btn",
+        class: "tsql-btn is-outline",
         text: "Clear history",
         attrs: { type: "button" },
         on: {

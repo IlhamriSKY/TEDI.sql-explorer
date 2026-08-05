@@ -2,6 +2,20 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.3] - 2026-08-05
+
+### Changed
+
+- **The neutral buttons are drawn by their face, matching TEDI 0.4.14.** They
+  used to derive a border from `--foreground`, deliberately, because the host's
+  old `--tedi-button-border` token carried whatever a saved theme had snapshotted
+  and could be a 1.06:1 hairline nobody could see. The host now ships
+  `--tedi-button-face`, a fill held to a contrast floor on load and paired with a
+  label colour held to its own, so it is safe for an extension to read and gives
+  the same neutral button the app draws, themeable rather than derived. The
+  fallback covers an older host, so this still renders on TEDI before 0.4.14.
+  See [layout.js](src/styles/layout.js).
+
 ## [0.6.2] - 2026-08-05
 
 ### Added

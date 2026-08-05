@@ -139,7 +139,7 @@ async function bootSidecar() {
         baseUrl: `http://127.0.0.1:${line.port}`,
       });
       // Publish it so a float window adopts this helper instead of spawning its
-      // own. ponytail: last writer wins, so two windows booting in the same
+      // own. Known limit: last writer wins, so two windows booting in the same
       // instant can still leave one orphan - the float only opens on a click
       // long after the main window is up.
       void ctx.storage

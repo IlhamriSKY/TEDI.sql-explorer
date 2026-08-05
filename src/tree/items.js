@@ -25,6 +25,10 @@ export function buildTreeItems() {
       expanded: treeExpanded.has(id),
       loading: treeLoadingNodes.has(id),
       actions: [
+        // Refresh sits on the ROW, not only in the right-click menu: the whole
+        // point is picking up a database created since the tree was read, and a
+        // user who has just made one goes looking for a button.
+        { id: "refresh", icon: "lucide:RefreshCw", tooltip: "Refresh databases" },
         { id: "edit", icon: "lucide:Pencil", tooltip: "Edit connection" },
         { id: "delete", icon: "lucide:Trash2", tooltip: "Delete connection", danger: true },
       ],

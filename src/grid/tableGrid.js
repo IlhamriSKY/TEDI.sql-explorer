@@ -112,6 +112,7 @@ export function renderTableGrid(container, session) {
           right.appendChild(
             textBtn("Row", "Add01Icon", {
               title: "Insert row",
+              iconOnly: true,
               onClick: () => openInsertDialog(session),
             }),
           );
@@ -120,18 +121,21 @@ export function renderTableGrid(container, session) {
         right.appendChild(
           textBtn("Structure", "TableIcon", {
             title: "View table structure (columns, types, keys)",
+            iconOnly: true,
             onClick: () => openStructureDialog(session),
           }),
         );
         right.appendChild(
           textBtn("Reload", "Refresh01Icon", {
             title: "Reload current page",
+            iconOnly: true,
             onClick: () => loadTableRows(session, snap.page),
           }),
         );
         right.appendChild(
           textBtn("Close", "Cancel01Icon", {
             title: "Close table view",
+            iconOnly: true,
             onClick: () => {
               session.activeTable = null;
               session.tableSnapshot = null;

@@ -2,6 +2,43 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.2] - 2026-08-05
+
+### Added
+
+- **A connection can scope the tree to SEVERAL databases, not just one.** The
+  `Database (optional)` field took a single name, and pinning one meant a
+  database created afterwards could never appear in the tree however often it
+  was refreshed. It now takes a comma-separated list (`app, shop, blog`); blank
+  still means "browse everything". PostgreSQL is unchanged, because there the
+  field is the connect TARGET (one database per connection) rather than a
+  filter. The list is deliberately kept out of the connection URL: it would
+  otherwise reach the sidecar as `default_database` and open a connection
+  against a database literally named "app, shop".
+- **Refresh sits on the connection row.** Re-reading a connection's databases
+  was only reachable from the right-click menu, and someone who has just created
+  a database goes looking for a button. The query behind it was never cached:
+  `/databases` hits `information_schema.schemata` live on every call, so this is
+  about reach, not about a stale fetch.
+
+### Changed
+
+- **The table toolbar is icon-only.** `Structure`, `Reload`, `Close` and the
+  writable-only `Insert row` were icon + label in a row that also carries the
+  pager and the page-size picker. They keep their tooltips, which are now the
+  only name shown, and their `aria-label`, which is the name a screen reader
+  reads.
+
+### Fixed
+
+- **A CSS change did nothing until TEDI was fully restarted.** `injectStyles`
+  bailed out when a `<style>` with its id already existed, and an in-place
+  extension upgrade re-activates without removing the old one. New markup then
+  ran against old rules: the redesigned dropdown filter rendered with its icon
+  stacked above a bordered input, and a dialog button that had just gained an
+  `is-outline` class drew no border at all because the rule for it was not in
+  the document. The stylesheet is now rewritten on every activate.
+
 ## [0.6.1] - 2026-08-04
 
 ### Fixed

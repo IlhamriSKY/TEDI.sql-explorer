@@ -71,6 +71,11 @@ export const LAYOUT_CSS = `
 .tsql-btn:hover:not([disabled]) { background: var(--muted, var(--accent, rgba(127,127,127,0.08))); color: var(--foreground); }
 .tsql-btn:focus-visible { border-color: var(--ring, var(--primary, #3b82f6)); }
 .tsql-btn.is-disabled, .tsql-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+/* Icon-only variant: square, no label. Same height as its labelled siblings so
+   a toolbar mixing the two keeps one baseline. The name lives in aria-label +
+   data-tooltip, never on screen. */
+.tsql-btn--icon { width: 28px; padding: 0; justify-content: center; }
+.tsql-dialog-form .tsql-btn--icon { width: 34px; }
 /* Outline (secondary) button. The bare .tsql-btn is a GHOST - transparent bg
    AND a transparent border - which is right for a toolbar icon but leaves a
    dialog's Cancel reading as plain text with nothing to aim at. Anything in a

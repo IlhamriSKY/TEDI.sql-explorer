@@ -31,7 +31,7 @@ function eventAt(at) {
  * Re-expanding is what triggers the fetch, and `view` owns the spinner + the
  * load, so hand the toggle back to it rather than fetching here.
  */
-function refreshNode(id, view) {
+export function refreshNode(id, view) {
   treeChildren.delete(id);
   if (!treeExpanded.has(id)) {
     view.render();

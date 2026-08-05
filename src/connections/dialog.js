@@ -123,7 +123,7 @@ export async function openConnectionDialog(existing) {
           onInput: (v) => (form.database = v),
           placeholder: getDialect(form.kind).databaseIsConnectTarget
             ? "postgres"
-            : "leave blank to browse all",
+            : "leave blank to browse all, or list several: app, shop",
         }),
       ),
       // Tunnel through a host saved in TEDI's SSH manager. Named by id: the

@@ -2,6 +2,7 @@
 // select (lazy connect-with-retry). Bundled into extension.js by build.mjs.
 import { buildConnectionUrl, getDialect } from "../dialects/index.js";
 import { releaseTunnel, resolveEndpoint } from "./tunnel.js";
+import { connectTargetDatabase } from "./store.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { safeToast } from "../dom.js";
 import { history } from "../query.js";
@@ -33,7 +34,9 @@ export async function connectFromForm(form, { test = false } = {}) {
     allow_writes: form.allow_writes,
     query_timeout_ms: form.query_timeout_ms || 30000,
     row_limit: form.row_limit || 10000,
-    default_database: form.database || null,
+    // NOT `form.database`: that may be a comma-separated SCOPE list for the
+    // tree, and the sidecar would try to open a database by that literal name.
+    default_database: connectTargetDatabase(form),
     sqlite_read_only: !!form.sqliteReadOnly,
   };
   await fetchJson("/connect", { method: "POST", body });

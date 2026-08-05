@@ -23,7 +23,7 @@ import {
   treeLoadingNodes,
 } from "./data.js";
 import { buildTreeItems } from "./items.js";
-import { openTreeContextMenu } from "./menu.js";
+import { openTreeContextMenu, refreshNode } from "./menu.js";
 
 /**
  * Publish the connection/schema tree into the host's left "Databases" sidebar
@@ -74,7 +74,9 @@ export function syncSidebarSection() {
       onItemAction: (id, action) => {
         const conn = state.connections.find((c) => c.id === parseNid(id).connId);
         if (!conn) return;
-        if (action === "edit") void openConnectionDialog(conn);
+        if (action === "refresh") {
+          refreshNode(id, { render: syncSidebarSection, toggle: onTreeToggle });
+        } else if (action === "edit") void openConnectionDialog(conn);
         else if (action === "delete") void confirmAndDeleteConnection(conn);
       },
     });

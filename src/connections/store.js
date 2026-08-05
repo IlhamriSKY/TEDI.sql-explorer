@@ -1,6 +1,7 @@
 // SQL Explorer — connections/store: persistence (settings), passwords (OS
 // keychain), form validation/normalisation, and per-connection session
 // bootstrap. Bundled into extension.js by build.mjs.
+import { getDialect } from "../dialects/index.js";
 import { ctx, state } from "../runtime.js";
 
 // ----------------------------- Settings + secrets ----------------------------
@@ -138,6 +139,41 @@ export async function deleteSecret(connId) {
 }
 
 // ----------------------------- Form helpers ----------------------------------
+
+/**
+ * Databases the tree should show for `conn`, parsed from the connection's
+ * `database` field. Empty = show everything the server reports.
+ *
+ * The field carries TWO different meanings depending on the engine, which is
+ * why this is a function and not a property read:
+ *  - PostgreSQL binds ONE database per connection, so there the field is the
+ *    connect TARGET and a list would be meaningless. `databaseIsConnectTarget`
+ *    marks that, and the scope is left empty so the tree lists every database.
+ *  - MySQL / SQLite reach every database over one connection, so there the
+ *    field is a FILTER, and it may now name several, comma separated. Pinning a
+ *    single one used to be the only option, which also meant a database created
+ *    afterwards could never appear in the tree no matter how often it was
+ *    refreshed.
+ */
+export function scopedDatabases(conn) {
+  if (!conn || getDialect(conn.kind).databaseIsConnectTarget) return [];
+  return String(conn.database ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * What to hand the sidecar as `default_database`. A scope list must never reach
+ * it verbatim: it becomes the connection's default schema, so "a,b" would open
+ * a connection against a database of that name and fail. The first entry is a
+ * sensible default schema; a connect-target engine passes its single value.
+ */
+export function connectTargetDatabase(form) {
+  if (!form) return null;
+  if (getDialect(form.kind).databaseIsConnectTarget) return form.database || null;
+  return scopedDatabases(form)[0] || null;
+}
 
 export function validateForm(form) {
   if (!form.name && !form.id) throw new Error("Name is required");

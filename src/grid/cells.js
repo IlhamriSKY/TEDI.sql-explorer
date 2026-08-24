@@ -55,6 +55,10 @@ export function cellTooltip(value) {
  * schema, table}` descriptor) enables the INSERT item; pass null to omit it
  * (e.g. a non-editable query result that doesn't map to one base table).
  */
+/**
+ * @param {{ columns?: any, row?: any, value?: any, connId?: any,
+ *           target?: any }} opts
+ */
 export function gridCopyMenuItems({ columns, row, value, connId, target }) {
   const items = [
     {

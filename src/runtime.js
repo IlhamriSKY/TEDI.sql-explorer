@@ -19,7 +19,7 @@ export function pageSizeFor(session) {
 
 // ----------------------------- Module state ----------------------------------
 
-/** @type {import("./extension.d.ts").ExtensionContext | null} */
+/** @type {import("../tedi").ExtensionContext | null} */
 export let ctx = null;
 export let panelRoot = null;
 export const state = {

@@ -10,6 +10,11 @@ import { appendIcon } from "./icon.js";
 // HugeIcon palette with textBtn / row actions. The clear
 // button hides while the input is empty (no useless X glyph) and shows
 // the moment the user types one character.
+/**
+ * @param {{ placeholder?: string, ariaLabel?: string, inputClass?: string,
+ *           wrapClass?: string, initialValue?: string,
+ *           onInput?: (value: string) => void }} opts
+ */
 export function makeSearchInput({
   placeholder,
   ariaLabel,
@@ -66,6 +71,10 @@ export function cryptoId() {
   return `c-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * @param {{ type?: string, value?: string, onInput?: (value: string) => void,
+ *           placeholder?: string }} [opts]
+ */
 export function input({ type = "text", value = "", onInput, placeholder } = {}) {
   const node = el("input", {
     class: "tsql-input",
@@ -80,6 +89,10 @@ export function input({ type = "text", value = "", onInput, placeholder } = {}) 
  *  makeNumberWrap). Returns the wrapper element; the `onInput` listener fires
  *  for both typing and stepper clicks. Used for the connection editor's
  *  numeric fields so they match the cell editor's number chrome. */
+/**
+ * @param {{ value?: string | number, onInput?: (value: string) => void,
+ *           min?: number, step?: number, placeholder?: string }} [opts]
+ */
 export function numberInput({ value = "", onInput, min, step, placeholder } = {}) {
   const node = input({ type: "number", value, onInput, placeholder });
   if (min != null) node.setAttribute("min", String(min));

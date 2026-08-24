@@ -26,6 +26,10 @@ export function closeOpenDialogs() {
  * `{ body, close }`; the caller fills `body` with its content. Closes on the X
  * button, a backdrop click, or Escape. Only one form modal at a time.
  */
+/**
+ * @param {{ title: string, width?: number, compact?: boolean,
+ *           onClose?: () => void }} opts
+ */
 export function openCenteredDialog({ title, width = 520, compact = false, onClose }) {
   // Mount on document.body (not panelRoot) so the modal centers on the whole
   // window and is never clipped by a short split-pane — matches host modals.
@@ -116,6 +120,12 @@ function appendDialogClose(dialog, onClose) {
  * to flip it to the host's red destructive chrome (matches the
  * `AlertDialogAction variant="destructive"` pattern used in
  * SourceControlPanel.tsx).
+ */
+/**
+ * @param {{ title: string, message?: string, sql?: string, language?: string,
+ *           confirmLabel?: string, cancelLabel?: string,
+ *           destructive?: boolean }} opts
+ * @returns {Promise<boolean>}
  */
 export function openConfirmDialog({
   title,

@@ -10,6 +10,10 @@ import { appendIcon } from "./icon.js";
 import { MONTHS, WEEKDAYS, formatState, pad2, parseState } from "./dateParts.js";
 import { placeFloating, trackFloatingMenu } from "./menus.js";
 
+/**
+ * @param {{ type: string, value?: string, onCommit?: (value: string) => void,
+ *           onCancel?: () => void }} opts
+ */
 export function createDatePicker({ type, value = "", onCommit, onCancel }) {
   let currentValue = value ?? "";
   let popup = null;

@@ -65,6 +65,7 @@ import { openWorkbenchTab, syncSidebarSection } from "./tree.js";
 
 // ----------------------------- Entry points ----------------------------------
 
+/** @param {import("../tedi").ExtensionContext} context */
 export async function activate(context) {
   setCtx(context);
   const missing = checkRequiredApis(ctx);

@@ -26,12 +26,6 @@ export function closeAllSelectMenus() {
 }
 
 /**
- * Register an arbitrary floating-popup closer (e.g. the custom date picker)
- * with the same registry the select/context menus use, so a grid re-render or
- * pane teardown (`closeAllSelectMenus()`) force-closes it too instead of
- * orphaning a body-mounted popup. Returns an unregister fn.
- */
-/**
  * Place a body-mounted floating layer (a menu, a picker popup) inside the
  * viewport.
  *
@@ -57,6 +51,12 @@ export function placeFloating(node, anchor, { gap = 4, margin = 8 } = {}) {
   node.style.top = `${Math.max(margin, top)}px`;
 }
 
+/**
+ * Register an arbitrary floating-popup closer (e.g. the custom date picker)
+ * with the same registry the select/context menus use, so a grid re-render or
+ * pane teardown (`closeAllSelectMenus()`) force-closes it too instead of
+ * orphaning a body-mounted popup. Returns an unregister fn.
+ */
 export function trackFloatingMenu(closeFn) {
   openSelectMenus.add(closeFn);
   return () => openSelectMenus.delete(closeFn);

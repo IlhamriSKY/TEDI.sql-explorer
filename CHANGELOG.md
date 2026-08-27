@@ -2,6 +2,13 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.5] - 2026-08-27
+
+### Added
+
+- **AI tools: list connections, browse the schema, and run a query.** This extension registered none, so neither TEDI's own agent nor a connected AI CLI could reach a database at all - the panel could be toggled and the Run button pressed on whatever happened to be in the editor, and that was the entire surface. Each tool is a thin wrapper over the same sidecar calls the UI makes, so a query has one implementation rather than two, and results are capped at 200 rows because a `SELECT` with no `LIMIT` against a real table is megabytes nobody wants in a tool result.
+- **The safety rules are the extension's own, not a second set written for models.** A read-only connection refuses a write here exactly as it does in the grid editor, and a statement the Run button would raise a confirmation for is REFUSED with the reason rather than silently confirmed - a caller has to pass `confirm: true` explicitly to proceed. Everything that mutates is declared as needing approval so the host raises a card regardless, because an extension tool runs third-party code with the app's privileges and a prompt-injected model must not be able to drop a table quietly.
+
 ## [0.6.4] - 2026-08-24
 
 ### Changed

@@ -27,6 +27,7 @@ import {
   restoreWorkbenchSession,
   selectConnection,
 } from "./connections.js";
+import { registerAiTools } from "./ai.js";
 import { closeOpenDialogs, disposePreviewEditors } from "./dialogs.js";
 import { initTooltipLayer, safeToast, setTooltipLayer, tooltipLayer } from "./dom.js";
 import { runActiveQuery } from "./query.js";
@@ -76,6 +77,9 @@ export async function activate(context) {
     return;
   }
   injectStyles();
+  // AI tools: list connections, browse the schema, run a query. Registered from
+  // activate() (never the manifest) like every other extension AI tool.
+  registerAiTools();
   await loadSavedConnections();
   // Reopen the connection and the query that were open. In the main window that
   // is "the workbench survived a restart"; in a float window it is the whole

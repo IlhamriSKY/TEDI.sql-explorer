@@ -163,6 +163,12 @@ export type AppContextTerminal = {
   /** Host-captured, glyph-stripped OSC 0/2 window title. Prefer this over
    *  re-deriving a title from the byte stream. */
   title?: string;
+  /** True when the tab this terminal lives in is pinned. */
+  pinned?: boolean;
+  /** The user's own name for the tab (absent = the derived one). Kept separate
+   *  from `title`, which is whatever a running program set as its window
+   *  title. */
+  customTitle?: string;
   wsId?: string;
   wsName?: string;
   wsActive?: boolean;
@@ -176,6 +182,9 @@ export type AppContextSnapshot = {
    *  "all open terminals" is what you mean. */
   terminalCount: number;
   /** Kind of the focused tab. `null` when no tab is active. */
+  /** `"browser"` is not reported: a browser is an extension, so its pane
+   *  reports `"ext"` like any other. Kept in the union so an extension that
+   *  branches on it still type-checks. */
   activeTabKind: "terminal" | "ssh" | "editor" | "diff" | "browser" | "ext" | null;
   /** Workspaces the user has open. Always >= 1. */
   workspaceCount: number;
@@ -272,6 +281,29 @@ export type SafeSshConnection = {
  * progress bar, an optional value, and a muted trailing note. A row with an
  * empty `label` and no `progress` renders as a plain footer line.
  */
+/**
+ * A pixel chart drawn above a {@link StatusItem} `detail`'s rows: one column
+ * per sample, oldest first, on the same 4 px grid the status bar's meters use.
+ * The host does no scaling - each value is already 0..1 - because only you know
+ * whether your axis starts at zero, auto-fits a window, or tracks a budget.
+ *
+ * At most the newest 48 columns are drawn: that is the widest grid the
+ * tooltip's popover holds without wrapping.
+ */
+export type StatusItemDetailChart = {
+  /** Oldest first, newest last. Each 0..1; 0 draws an empty column, so a gap in
+   *  the data and a value at the floor stay distinguishable. */
+  values: number[];
+  /** Fill colour, same palette as `StatusItem.tone`. */
+  tone?: "default" | "success" | "warning" | "error";
+  /** Grid height in cells. Clamped to 3..16, default 8. */
+  rows?: number;
+  /** Caption under the grid, left (e.g. `"last 3 min"`). */
+  label?: string;
+  /** Caption under the grid, right (e.g. `"peak 6.0G · low 4.8G"`). */
+  note?: string;
+};
+
 export type StatusItemDetailRow = {
   label: string;
   /** 0..1 fill; when set the row draws a themed progress bar. */
@@ -301,11 +333,18 @@ export type StatusItem = {
   /** Short text after the icon (e.g. `"62%"`). Keep it tiny; put the full
    *  story in `tooltip` or `detail`. */
   label?: string;
-  /** 0..1 fill. Renders a compact themed progress bar after the icon/label. */
+  /** 0..1 fill. Renders a compact themed progress bar after the icon/label.
+   *
+   *  It also decides PLACEMENT: an extension that publishes any metered item
+   *  sorts before the icon-only ones (then by extension id), so the readouts
+   *  group together instead of being scattered among the state lights, and the
+   *  compact bar keeps exactly these. The rank is per extension, so one meter
+   *  going temporarily unavailable does not move its siblings. */
   progress?: number;
   /** Structured tooltip. When set it replaces the plain `tooltip` string in
-   *  the popover (which stays the aria-label and the fallback). */
-  detail?: { title?: string; rows: StatusItemDetailRow[] };
+   *  the popover (which stays the aria-label and the fallback). `chart` adds a
+   *  pixel trend above the rows. */
+  detail?: { title?: string; rows: StatusItemDetailRow[]; chart?: StatusItemDetailChart };
   /** When set the item renders as a real focusable `<button>` instead of a
    *  decorative span. Prefer this over document-wide click listeners. */
   onClick?: () => void;
@@ -437,7 +476,7 @@ export type SidebarSection = {
 // ---------------------------------------------------------------------------
 
 /** `bash` = hidden agent shells (`bash_run` / `bash_background`);
- *  `terminal` = visible PTY injections (`suggest_command` / `run_in_terminal`). */
+ *  `terminal` = the visible PTY (the `sh` MCP tool, `schedule_command`). */
 export type ShellCommandKind = "bash" | "terminal";
 
 /**
@@ -792,6 +831,17 @@ export type ExtensionContext = {
     createWorkspace(name: string): Promise<{ ok: boolean; wsId?: string; error?: string }>;
     /** Switch the active workspace by id. Requires `workspaces:manage`. */
     setActiveWorkspace(wsId: string): Promise<{ ok: boolean; error?: string }>;
+    /** Rename a workspace. The new name reaches you through
+     *  `terminals[].wsName`. Requires `workspaces:manage`. */
+    renameWorkspace(wsId: string, name: string): Promise<{ ok: boolean; error?: string }>;
+    /** Pin or unpin the tab a terminal belongs to. `key` is the id
+     *  `terminals[].ptyId` publishes (a daemon ptyId, or `ssh:<sessionId>`).
+     *  Requires `workspaces:manage`. */
+    setTabPinned(key: string, pinned: boolean): Promise<{ ok: boolean; error?: string }>;
+    /** Rename a terminal's tab, or pass `null` to drop back to the derived name.
+     *  `key` is as in `setTabPinned`; the result shows up as
+     *  `terminals[].customTitle`. Requires `workspaces:manage`. */
+    renameTab(key: string, title: string | null): Promise<{ ok: boolean; error?: string }>;
   };
 
   /** App settings, namespaced under `ext:<your-id>:`. Built-in settings are
@@ -955,6 +1005,9 @@ export type ExtensionContext = {
       reuseKey?: string;
       state: ExtensionTabState | null;
       title?: string;
+      /** Same icon refs `contributes.panels[].icon` takes, including a `data:`
+       *  URL - which is how a pane can wear the favicon of the page it shows. */
+      icon?: string;
     }): void;
   };
 
@@ -985,9 +1038,9 @@ export type ExtensionContext = {
   };
 
   shell: {
-    /** Rewrite commands before `bash_run`, `bash_background`,
-     *  `run_in_terminal` and `suggest_command` execute. Transformers compose
-     *  in insertion order. Requires `shell:transform`. */
+    /** Rewrite commands before `bash_run`, `bash_background`, the `sh` MCP tool
+     *  and `schedule_command` execute. Transformers compose in insertion order.
+     *  Requires `shell:transform`. */
     registerCommandTransformer(transformer: ShellCommandTransformer): Disposer;
   };
 

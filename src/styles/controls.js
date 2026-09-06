@@ -50,8 +50,11 @@ export const CONTROLS_CSS = `
 .tsql-dialog-sql .tsql-sql-preview { color: var(--foreground); font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 /* Middle action-SQL strip (between editor and table). Height follows the
    query (wraps + grows, caps then scrolls); no line-number gutter, no
-   active-line highlight — it's a read-only cue, kept tidy. */
-.tsql-action-sql { display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto; padding: 5px 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--card, var(--background)); }
+   active-line highlight, it is a read-only cue, kept tidy.
+   A card on the tray now: the two edge hairlines that used to delimit it
+   collapse into one border on all four sides, and the 6px margin below is the
+   seam to the results card. */
+.tsql-action-sql { display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius, 0); margin-bottom: 6px; background: var(--card, var(--background)); }
 .tsql-action-sql-label { flex: 0 0 auto; padding-top: 3px; font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-foreground); }
 .tsql-action-sql .tsql-sql-editor { flex: 1 1 auto; min-width: 0; max-height: 132px; overflow-y: auto; overflow-x: hidden; border-bottom: 0; background: transparent; }
 .tsql-action-sql .tsql-sql-editor .cm-editor { height: auto; background: transparent; }

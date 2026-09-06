@@ -6,8 +6,14 @@
 export const LAYOUT_CSS = `
 /* The pane is the vertical scroll container: when it gets shorter than the
    workbench's natural minimum height (toolbar + editor + results), it scrolls
-   instead of clipping, so every control stays reachable. */
-.tsql-host { height: 100%; display: flex; flex-direction: column; color: var(--foreground); background: var(--background); font-size: 12px; position: relative; overflow-y: auto; overflow-x: hidden; }
+   instead of clipping, so every control stays reachable.
+   It is also the BENTO TRAY. It paints the deeper --sidebar well and insets its
+   contents by 6px, so the toolbar, editor, action strip and results read as
+   separate cards floating on it, with the same 6px seam the host puts between
+   its own panes. Under glass the host pins this element to --tedi-glass-surface
+   (globals.css), so the tray flattens there and the bento reads by card borders
+   alone, exactly as it does for the host's own cards. */
+.tsql-host { height: 100%; display: flex; flex-direction: column; color: var(--foreground); background: var(--sidebar, var(--background)); font-size: 12px; position: relative; overflow-y: auto; overflow-x: hidden; padding: 6px; }
 /* min-height:100% (not height:100%): fills the pane when tall, but grows past
    it (so .tsql-host scrolls) when the content's natural min exceeds it. */
 .tsql-root { display: flex; flex-direction: column; min-height: 100%; }
@@ -58,9 +64,11 @@ export const LAYOUT_CSS = `
    (so the pane scrolls when short) yet still flex-grows to fill a tall pane.
    .tsql-results / .tsql-grid-wrap keep min-height:0 for the grid's own scroll. */
 .tsql-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
-.tsql-main--empty { align-items: center; justify-content: center; }
-/* Action toolbar (Run / Stop / Export + read-only pill) above the editor. */
-.tsql-toolbar { display: flex; gap: 5px; padding: 4px 8px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.tsql-main--empty { align-items: center; justify-content: center; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius, 0); }
+/* Action toolbar (Run / Stop / Export + read-only pill) above the editor. A
+   card on the tray: its old bottom hairline is gone, and the 6px margin below
+   it is the seam to whatever comes next (editor, action strip or results). */
+.tsql-toolbar { display: flex; gap: 5px; padding: 4px 8px; background: var(--card, var(--background)); flex-wrap: wrap; align-items: center; flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--radius, 0); margin-bottom: 6px; }
 /* Buttons match the host's <Button variant="ghost"> chrome: 1 px
    transparent border at rest so the hover bg paints as a clean box
    without an outline ring, only --ring shows on focus-visible.
@@ -111,33 +119,31 @@ export const LAYOUT_CSS = `
    ctx.ui.codeEditor. The .cm-editor inside fills the container. */
 /* Compact fixed-basis editor (resizable via the splitter / --tsql-editor-h),
    shrinkable on short panes; the results below take all remaining space. */
-.tsql-editor { width: 100%; min-height: 64px; overflow: hidden; display: flex; flex-direction: column; flex: 0 1 var(--tsql-editor-h, 128px); }
+.tsql-editor { width: 100%; min-height: 64px; overflow: hidden; display: flex; flex-direction: column; flex: 0 1 var(--tsql-editor-h, 128px); background: var(--background); border: 1px solid var(--border); border-radius: var(--radius, 0); }
 .tsql-editor .cm-editor { height: 100%; flex: 1 1 auto; min-height: 0; }
 .tsql-editor .cm-editor.cm-focused { outline: none; }
 /* Vertical splitter between the query editor and the results pane.
    Drag handler in renderEditorAndResults updates --tsql-editor-h on
    the parent .tsql-main, which flex-basis: var(...) flows into.
-   Mirrors the host PaneTreeView's resize chrome (bg-border/50,
-   hover bg-primary/50 on the line; thicker centred grip in
-   --tedi-resize-handle) so the SQL Explorer splitter looks and feels
-   identical to the terminal/editor pane separators. Grip is the
-   "thicker section" the user sees in the middle of pane splits:
-   24x4 sharp rectangle (radius-lg=0 in TEDI). NB: comment lives in
-   a JS template literal, so backticks are forbidden here. */
-.tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; display: flex; align-items: center; justify-content: center; }
-.tsql-splitter::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 1px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
-.tsql-splitter::after { content: ""; position: relative; z-index: 1; width: 24px; height: 4px; background: var(--tedi-resize-handle, var(--border)); transition: background 0.12s ease; }
-/* Match the app's ResizableHandle exactly: only the 1px LINE lights to
-   primary/50 on hover/drag/focus; the grip stays --tedi-resize-handle (grey),
-   never solid blue, so the SQL splitter reads the same as every pane separator. */
-.tsql-splitter:hover::before, .tsql-splitter.is-dragging::before, .tsql-splitter:focus-visible::before { background: color-mix(in srgb, var(--primary, #3b82f6) 50%, transparent); }
+   It paints NOTHING. Like the host's own ResizableHandle it simply IS the 6px
+   seam between two cards, so the tray shows through and there is no line and no
+   grip to look at. The ::after is a transparent hit pad, not paint: it reaches
+   2px into the card above and below, so the grab target is the card's own edge.
+   That is how the host handle behaves (its library inflates the hit region to
+   10px around the gutter). The element stays rather than being deleted because
+   it is a real role=separator with ARIA and arrow-key resize, so :focus-visible
+   wears the host's outline recipe in place of the deleted line highlight.
+   NB: comment lives in a JS template literal, so backticks are forbidden here. */
+.tsql-splitter { position: relative; flex: 0 0 6px; cursor: ns-resize; background: transparent; user-select: none; touch-action: none; outline: none; }
+.tsql-splitter::after { content: ""; position: absolute; left: 0; right: 0; top: -2px; bottom: -2px; }
+.tsql-splitter:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary, #3b82f6) 70%, transparent); outline-offset: -2px; }
 /* Fills all space below the compact editor (no gap), so the ≤10-row table
    uses the available height instead of scrolling inside a small box. */
 /* No overflow:hidden here — it used to clip the bottom (pager/grid) AND cap the
    results' min-content at 96px, which broke the pane scroll. Without it, the
    results grow to their real content so the natural min propagates up and
    .tsql-host scrolls; the grid keeps its OWN internal scroll via .tsql-grid-wrap. */
-.tsql-results { display: flex; flex-direction: column; min-height: 96px; flex: 1 1 auto; }
+.tsql-results { display: flex; flex-direction: column; min-height: 96px; flex: 1 1 auto; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius, 0); }
 .tsql-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px; background: var(--card, var(--background)); flex: 0 0 auto; }
 .tsql-result-tab { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 11px; transition: color 0.12s ease, background 0.12s ease; }
 .tsql-result-tab:hover { color: var(--foreground); }

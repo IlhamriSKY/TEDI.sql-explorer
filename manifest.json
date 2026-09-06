@@ -2,7 +2,7 @@
   "$schema": "./manifest.schema.json",
   "id": "tedi.sql-explorer",
   "name": "SQL Explorer",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Browses and queries MySQL, PostgreSQL, and SQLite databases: schema tree with a per-node menu, query editor with run-selection / explain / history, inline row edit, indexes + foreign keys + DDL, and CSV / JSON / SQL export. Toggle with Ctrl+Alt+D.",
   "author": "IlhamRiski - ilhamriski.com",
   "homepage": "https://tedi.ilhamriski.com/",

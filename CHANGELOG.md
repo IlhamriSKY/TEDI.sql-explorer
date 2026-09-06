@@ -2,6 +2,12 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.6] - 2026-09-07
+
+### Changed
+
+- **The panel is a bento tray.** The host div paints the deeper `--sidebar` well and insets its contents by 6px, so the toolbar, the query editor, the action-SQL strip and the results read as separate cards floating on it, with the same 6px seam the host puts between its own panes. Each card carries one border on all four sides instead of the pair of edge hairlines that used to delimit it, and the splitter between editor and results paints nothing at all: like the host's own resize handle it simply is the seam, and the library inflates the hit region around it. Under glass the host pins the tray to `--tedi-glass-surface`, so the bento reads by card borders alone there, exactly as the host's own cards do.
+
 ## [0.6.5] - 2026-08-27
 
 ### Added

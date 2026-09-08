@@ -28,7 +28,7 @@ function metaTable(headers, rows) {
   const table = el("table", { class: "tsql-grid tsql-structure-grid" });
   const thead = el("thead");
   const hr = el("tr");
-  for (const h of headers) hr.appendChild(el("th", { text: h }));
+  for (const h of headers) hr.appendChild(el("th", { class: "tedi-glass-solid", text: h }));
   thead.appendChild(hr);
   table.appendChild(thead);
   const tbody = el("tbody");

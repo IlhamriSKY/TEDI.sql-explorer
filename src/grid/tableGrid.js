@@ -81,7 +81,7 @@ export function renderTableGrid(container, session) {
   container.appendChild(
     el(
       "div",
-      { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky" },
+      { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky tedi-glass-solid" },
       el(
         "span",
         { class: "tsql-grid-meta-left" },
@@ -154,7 +154,7 @@ export function renderTableGrid(container, session) {
   const table = el("table", { class: "tsql-grid" });
   const thead = el("thead");
   const headRow = el("tr");
-  headRow.appendChild(el("th", { class: "tsql-grid-actions-col", text: "" }));
+  headRow.appendChild(el("th", { class: "tsql-grid-actions-col tedi-glass-solid", text: "" }));
   // Column metadata (type / PK / nullability), eagerly loaded by loadTableRows.
   // Absent only if the /columns fetch failed — headers then show names alone.
   const colMeta = new Map((session._pkCache?.columns ?? []).map((c) => [c.name, c]));
@@ -163,7 +163,7 @@ export function renderTableGrid(container, session) {
     const dir = session.orderDir === "desc" ? "desc" : "asc";
     const meta = colMeta.get(col);
     const th = el("th", {
-      class: `tsql-grid-th${isSorted ? ` is-sort-${dir}` : ""}`,
+      class: `tsql-grid-th tedi-glass-solid${isSorted ? ` is-sort-${dir}` : ""}`,
       attrs: { title: columnHeaderTooltip(col, meta) },
     });
     const top = el("span", { class: "tsql-th-top" });

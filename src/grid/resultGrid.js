@@ -29,7 +29,7 @@ export function renderResultGrid(container, opts) {
   // Pagination is no longer crammed into this bar; it lives in a bottom
   // footer so the layout mirrors the table-browse view. Sticky so the
   // controls stay reachable while the result scrolls.
-  const metaBar = el("div", { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky" });
+  const metaBar = el("div", { class: "tsql-result-meta tsql-grid-meta tsql-meta--sticky tedi-glass-solid" });
   const leftMeta = el("span", { class: "tsql-grid-meta-left" });
   metaBar.appendChild(leftMeta);
 
@@ -173,7 +173,7 @@ function buildGridTable(columns, rows, editCtx) {
   const table = el("table", { class: "tsql-grid" });
   const thead = el("thead");
   const headRow = el("tr");
-  for (const col of columns) headRow.appendChild(el("th", { text: col }));
+  for (const col of columns) headRow.appendChild(el("th", { class: "tedi-glass-solid", text: col }));
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = el("tbody");

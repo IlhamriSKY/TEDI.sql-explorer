@@ -2,6 +2,12 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.7] - 2026-09-08
+
+### Changed
+
+- **The panel asks the host to keep its sticky bars opaque, instead of the host knowing this extension by name.** The result grid's column header and its sticky toolbar sit over rows that scroll beneath them, and both painted `--card`. Glass floors that token to a translucent surface on purpose, which is right for a panel and wrong for anything content passes under, so the rows showed through. TEDI had been papering over it from its own stylesheet with rules keyed to `.tsql-host`, `.tsql-grid thead th` and `.tsql-meta--sticky` - the host hard-coding one extension's private class names, which is exactly the kind of coupling neither side wants. TEDI 0.4.45 replaced that with `.tedi-glass-solid`, a class any extension can name, and those elements carry it now. Nothing about the appearance changes; what changes is who owns the decision. `engines.tedi` is raised to match, and on an older host the class matches nothing while TEDI's own shim still covers it.
+
 ## [0.6.6] - 2026-09-07
 
 ### Changed

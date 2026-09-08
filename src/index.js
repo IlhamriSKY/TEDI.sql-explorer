@@ -127,6 +127,16 @@ export async function activate(context) {
       syncSidebarSection();
       rerender();
     });
+    // And databases the Dev Environment extension has started SINCE this one
+    // activated. Installing MySQL there and opening the workbench here is one
+    // continuous action from the user's side; without this the connection it
+    // published only appears after a restart, which reads as the handover
+    // having silently failed.
+    void syncManagedConnections().then((changed) => {
+      if (!changed) return;
+      syncSidebarSection();
+      rerender();
+    });
     // Boot the sidecar lazily on first panel mount. If it later dies, fetchJson
     // detects the dropped connection and re-boots it automatically.
     ensureSidecar()

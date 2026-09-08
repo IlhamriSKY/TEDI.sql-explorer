@@ -2,6 +2,12 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.9] - 08-09-2026
+
+### Changed
+
+- **The Dev Environment's databases appear when the workbench opens, not only when this extension starts.** Installing MySQL there and opening the workbench here is one continuous action from your side; the connection it publishes was only picked up at activation, so it took a restart to show and the handover read as having silently failed. The panel re-reads the handoff file on mount, the same way it already re-reads connections another window saved.
+
 ## [0.6.8] - 2026-09-08
 
 ### Added

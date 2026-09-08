@@ -6,4 +6,5 @@ extension.js   text eol=lf
 build.mjs      text eol=lf
 src/*.js       text eol=lf
 src/**/*.js    text eol=lf
+src/**/*.mjs   text eol=lf
 *.json         text eol=lf

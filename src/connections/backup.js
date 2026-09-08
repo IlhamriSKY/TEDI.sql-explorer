@@ -81,7 +81,7 @@ const VALID_SSL = new Set(["none", "preferred", "required", "verify_ca", "verify
  * `sslMode` would be handed to the sidecar verbatim, and a record with no id
  * would collide with the next one on save. Returns null to drop the entry.
  */
-function sanitizeConnection(raw, validKinds) {
+export function sanitizeConnection(raw, validKinds) {
   if (!isRecord(raw)) return null;
   const id = str(raw.id).trim();
   const kind = str(raw.kind).trim();

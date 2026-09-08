@@ -2,6 +2,22 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.8] - 2026-09-08
+
+### Added
+
+- **The databases the Dev Environment extension runs appear here on their own.** Install MySQL or PostgreSQL in [Dev Environment](https://github.com/IlhamriSKY/tedi.dev-environment) and it shows up in **Databases** with the right host, port and user already filled in. A port that moves there follows into the saved connection; a database removed there takes its connection with it. Nothing to set up on either side, and nothing happens if that extension is not installed.
+
+  It is a file rather than a call, `~/.tedi/dev-environment.json`, because the host deliberately gives two extensions no way to reach each other: `ctx.settings`, `ctx.events` and `ctx.secrets` all namespace their key under the id of whoever is calling, and `ctx.tabs.openExtensionTab` hard-wires the caller's own id. That file is a trust boundary like any other - it is written by another program and its records are later dialled - so it goes through the same `sanitizeConnection` an imported `.tedi-sql` backup does, and an id outside the `devenv:` prefix is dropped rather than allowed to rewrite a connection you typed. There is no password in it and none is expected: those servers are initialised insecure on loopback.
+
+  Only the address is taken from it. A rename, a raised row limit or `allow_writes` on one of those rows is yours and survives every sync, because losing it each time a port moved would make a handed-over connection worse than one typed by hand.
+
+- **`npm test`**, run in CI. The handoff crosses two repositories that never import each other, so a renamed field or a number where a string was expected would produce an empty list and no error anywhere.
+
+### Changed
+
+- **One filesystem permission, `invoke:fs_read_file`**, read-only and for that one path. Updating will show the permission review with it highlighted; the README says what it is for.
+
 ## [0.6.7] - 2026-09-08
 
 ### Changed

@@ -36,3 +36,5 @@ jobs:
         run: node build.mjs
       - name: Syntax check the built bundle
         run: node --check extension.js
+      - name: Self-checks
+        run: npm test

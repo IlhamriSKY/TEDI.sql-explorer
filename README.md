@@ -26,6 +26,27 @@ keys / DDL, and export results, all in a workspace tab next to your terminals.
 Open a connection from the **Databases** section in the left sidebar, or press
 `Mod+Alt+D`, to open the workbench.
 
+## Databases from the Dev Environment
+
+If you also run the
+[Dev Environment](https://github.com/IlhamriSKY/tedi.dev-environment) extension,
+the MySQL and PostgreSQL it manages appear in **Databases** on their own, with
+the right host, port and user already filled in. Nothing to set up on either
+side.
+
+That extension publishes what it runs to `~/.tedi/dev-environment.json` (a host,
+a port and a user - there is no password, those servers are initialised insecure
+on loopback) and this one reads it at startup. It is a file rather than a call
+because the host deliberately gives two extensions no way to reach each other:
+settings, events and secrets are all namespaced under the id of whoever is
+calling. The records go through the same validation an imported `.tedi-sql`
+backup does.
+
+Only the address is taken from it. If you rename one of those connections, raise
+its row limit or allow writes on it, that is yours and survives; a port that
+moves in the Dev Environment follows into the saved connection. Remove the
+database there and the connection goes with it.
+
 ## Update
 
 In **Settings → Extensions**, click **Check updates** on this extension's
@@ -74,11 +95,12 @@ On open:
 | `settings:read` / `settings:write` | Persist saved connections (sans password). |
 | `secrets:read` / `secrets:write` | Read / write passwords in the OS keychain. |
 | `ssh:connections` | Tunnel to a database behind a bastion, over an SSH connection you already saved. Only the connection **id** crosses this boundary; the SSH key / password stay in the keychain and are read by the app, never by this extension. |
+| `invoke:fs_read_file` | Read `~/.tedi/dev-environment.json`, and nothing else. It is how the Dev Environment extension hands over the databases it runs; the host offers extensions no other way to reach each other. |
 | `invoke:shell_bg_spawn_direct` / `invoke:shell_bg_logs` / `invoke:shell_bg_kill` | Spawn, poll, and stop the sidecar. |
 
-No filesystem permissions. The sidecar binds `127.0.0.1` only and authenticates
-every call with the per-boot bearer token; no other machine on the LAN can reach
-it.
+One filesystem permission, and it is read-only for one known path. The sidecar
+binds `127.0.0.1` only and authenticates every call with the per-boot bearer
+token; no other machine on the LAN can reach it.
 
 ## Development
 

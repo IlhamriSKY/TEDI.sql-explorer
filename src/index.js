@@ -19,13 +19,13 @@
 // pollution; on `deactivate` the panel renderer returns its cleanup
 // callback and the host clears the slot.
 
-
 import {
   loadSavedConnections,
   refreshSavedConnections,
   releaseTunnel,
   restoreWorkbenchSession,
   selectConnection,
+  syncManagedConnections,
 } from "./connections.js";
 import { registerAiTools } from "./ai.js";
 import { closeOpenDialogs, disposePreviewEditors } from "./dialogs.js";
@@ -52,7 +52,6 @@ import {
 } from "./sidecar.js";
 import { injectStyles } from "./styles.js";
 import { openWorkbenchTab, syncSidebarSection } from "./tree.js";
-
 
 /**
  * @typedef SessionState
@@ -81,6 +80,10 @@ export async function activate(context) {
   // activate() (never the manifest) like every other extension AI tool.
   registerAiTools();
   await loadSavedConnections();
+  // Databases the Dev Environment extension runs show up here without anyone
+  // typing a host and port. No-op when that extension is not installed: it is
+  // the side that writes the file this reads.
+  await syncManagedConnections().catch((err) => ctx?.logger?.warn?.("managed sync failed", err));
   // Reopen the connection and the query that were open. In the main window that
   // is "the workbench survived a restart"; in a float window it is the whole
   // point, since the float runs a second copy of this extension and would

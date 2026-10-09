@@ -1,4 +1,4 @@
-// SQL Explorer — tree/items: build host SidebarSection items from the tree
+// SQL Explorer, tree/items: build host SidebarSection items from the tree
 // state + the per-row action button + connection subtitle. Bundled by build.mjs.
 import { getDialect } from "../dialects/index.js";
 import { appendIcon, el } from "../dom.js";
@@ -69,7 +69,7 @@ function treeChildItems(parentId, connId) {
       if (item.expanded) item.children = treeChildItems(id, connId);
       return item;
     }
-    // table leaf — db comes from the parent (db or schema node), schema from
+    // table leaf: db comes from the parent (db or schema node), schema from
     // the descriptor (equals the db name when the schema level was collapsed).
     const db = parent.db;
     const schema = k.schema ?? parent.schema ?? db;

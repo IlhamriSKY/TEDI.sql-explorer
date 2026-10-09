@@ -1,9 +1,9 @@
-// SQL Explorer — dom/datePicker: a custom, theme-token date / time / datetime
+// SQL Explorer, dom/datePicker: a custom, theme-token date / time / datetime
 // picker that replaces the native WebView2 control. The native popup can't be
 // restyled (its rounded chips + selection are OS-drawn), so this one is built
 // from plain DOM using the same chrome as the rest of the workbench: square
 // corners (var(--radius, 0)), 1px var(--border) borders, --popover surface, and
-// foreground/accent tokens — so it reads identically in dark and light mode.
+// foreground/accent tokens, so it reads identically in dark and light mode.
 // Bundled into extension.js by build.mjs.
 import { el } from "./element.js";
 import { appendIcon } from "./icon.js";
@@ -254,7 +254,7 @@ export function createDatePicker({ type, value = "", onCommit, onCancel }) {
     closePopup();
   };
   // Keyboard dismissal that works whichever inner control has focus (text
-  // input, a calendar day button, or an HH/MM/SS field — none of which carry
+  // input, a calendar day button, or an HH/MM/SS field, none of which carry
   // their own key handler). Capture-phase + stopPropagation so Escape/Enter
   // act on the popup first instead of bubbling to a surrounding modal/shortcut.
   const onDocKeyDown = (e) => {

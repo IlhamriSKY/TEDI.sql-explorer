@@ -1,11 +1,11 @@
-// SQL Explorer — gridedit/cellEdit: inline single-cell UPDATE for both the
+// SQL Explorer, gridedit/cellEdit: inline single-cell UPDATE for both the
 // table-browse grid and the editable query-result grid. All writes are gated by
 // the sidecar's allow_writes classifier. Bundled into extension.js by build.mjs.
 //
 // The two public entry points differ ONLY in how they locate the cell's column
 // metadata, primary-key values, and where the saved value is written back. The
-// whole edit flow — typed widget, deepEqual no-op guard, confirm preview, POST,
-// saved flash, revert on cancel/error — is identical and lives once in
+// whole edit flow, typed widget, deepEqual no-op guard, confirm preview, POST,
+// saved flash, revert on cancel/error, is identical and lives once in
 // `editCell()`; the entry points are thin adapters that fill in those three
 // differences.
 import {
@@ -106,7 +106,7 @@ function editCell(td, spec) {
       // the user looking at an edit the database never made.
       if (resp?.affected === 0) {
         revert();
-        safeToast("No row matched — it may have changed. Reload the table.", "warning");
+        safeToast("No row matched (it may have changed). Reload the table.", "warning");
         return;
       }
       writeBack(next);

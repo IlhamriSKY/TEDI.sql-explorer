@@ -1,7 +1,7 @@
-// SQL Explorer — styles/layout: the structural shell, toolbar, editor +
+// SQL Explorer, styles/layout: the structural shell, toolbar, editor +
 // splitter, and result-pane scaffolding. All classes are `tsql-`-prefixed and
 // pull colours from TEDI's CSS design tokens. Bundled into extension.js by
-// build.mjs. (Concatenated in order by styles.js — keep the cascade stable.)
+// build.mjs. (Concatenated in order by styles.js; keep the cascade stable.)
 
 export const LAYOUT_CSS = `
 /* The pane is the vertical scroll container: when it gets shorter than the
@@ -113,6 +113,9 @@ export const LAYOUT_CSS = `
    font-medium) so it stays consistent with badges elsewhere in the app. Pushed
    to the right of the toolbar's action buttons. */
 .tsql-ro-pill { margin-left: auto; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 9999px; border: 1px solid transparent; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: default; color: var(--secondary-foreground, var(--foreground)); background: var(--secondary, var(--muted, rgba(127,127,127,0.16))); }
+.tsql-txn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.tsql-txn:empty { display: none; }
+.tsql-txn:not(:empty) + .tsql-ro-pill { margin-left: 0; }
 .tsql-ro-pill svg { width: 11px; height: 11px; flex: 0 0 auto; }
 
 /* Code-editor container: hosts a CodeMirror EditorView mounted by
@@ -139,7 +142,7 @@ export const LAYOUT_CSS = `
 .tsql-splitter:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary, #3b82f6) 70%, transparent); outline-offset: -2px; }
 /* Fills all space below the compact editor (no gap), so the ≤10-row table
    uses the available height instead of scrolling inside a small box. */
-/* No overflow:hidden here — it used to clip the bottom (pager/grid) AND cap the
+/* No overflow:hidden here: it used to clip the bottom (pager/grid) AND cap the
    results' min-content at 96px, which broke the pane scroll. Without it, the
    results grow to their real content so the natural min propagates up and
    .tsql-host scrolls; the grid keeps its OWN internal scroll via .tsql-grid-wrap. */

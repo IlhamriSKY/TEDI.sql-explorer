@@ -1,4 +1,4 @@
-// SQL Explorer — grid/tableGrid: render the editable table-browse grid —
+// SQL Explorer, grid/tableGrid: render the editable table-browse grid: 
 // sortable typed headers, inline cell edit, row insert/delete, structure view,
 // server-side search/column-filter, and a rows-per-page pager. The data ops
 // (open/load/search) live in ./tableData.js. Bundled into extension.js by
@@ -73,8 +73,10 @@ export function renderTableGrid(container, session) {
   // results body so the controls follow the user when the table scrolls.
   const tableLabel =
     target.database === target.schema ? target.table : `${target.schema}.${target.table}`;
+  // A huge unfiltered table reports the catalog's estimate instead of paying
+  // for a full-scan COUNT(*); say so rather than present it as exact.
   const rowsLabel = snap.total != null
-    ? `${snap.total.toLocaleString()} rows`
+    ? `${snap.total_estimated ? "~" : ""}${snap.total.toLocaleString()} rows`
     : `${snap.rows.length.toLocaleString()} rows`;
   const elapsedLabel =
     typeof snap.elapsed_ms === "number" ? ` · ${snap.elapsed_ms} ms` : "";
@@ -90,7 +92,7 @@ export function renderTableGrid(container, session) {
       ),
       (() => {
         const right = el("span", { class: "tsql-grid-meta-right" }, searchWrap, colSelect);
-        // Rows-per-page selector — moved up next to the Insert (Row) button so
+        // Rows-per-page selector, moved up next to the Insert (Row) button so
         // every table control sits together in the toolbar; the bottom pager is
         // left with just Prev / page / Next. Available on read-only connections
         // too, so it is appended before the (write-only) Row button.
@@ -107,7 +109,7 @@ export function renderTableGrid(container, session) {
         pageSizeSelect.classList.add("tsql-grid-pagesize");
         setTooltipAttr(pageSizeSelect, "Rows per page");
         right.appendChild(pageSizeSelect);
-        // Insert is a write — hide it on read-only connections.
+        // Insert is a write: hide it on read-only connections.
         if (!ro) {
           right.appendChild(
             textBtn("Row", "Add01Icon", {
@@ -117,7 +119,7 @@ export function renderTableGrid(container, session) {
             }),
           );
         }
-        // Structure is read-only — always available.
+        // Structure is read-only: always available.
         right.appendChild(
           textBtn("Structure", "TableIcon", {
             title: "View table structure (columns, types, keys)",
@@ -156,7 +158,7 @@ export function renderTableGrid(container, session) {
   const headRow = el("tr");
   headRow.appendChild(el("th", { class: "tsql-grid-actions-col tedi-glass-solid", text: "" }));
   // Column metadata (type / PK / nullability), eagerly loaded by loadTableRows.
-  // Absent only if the /columns fetch failed — headers then show names alone.
+  // Absent only if the /columns fetch failed; headers then show names alone.
   const colMeta = new Map((session._pkCache?.columns ?? []).map((c) => [c.name, c]));
   for (const col of snap.columns) {
     const isSorted = session.orderBy === col;
@@ -234,7 +236,7 @@ export function renderTableGrid(container, session) {
 
 function rowActionsCell(session, rowIdx, ro) {
   const cell = el("td", { class: "tsql-grid-actions-col" });
-  // Delete is a write — omit the action on read-only connections.
+  // Delete is a write: omit the action on read-only connections.
   if (!ro) {
     cell.appendChild(
       rowActionBtn("Delete02Icon", "Delete row", () => deleteRowFromGrid(session, rowIdx), {
@@ -248,7 +250,8 @@ function rowActionsCell(session, rowIdx, ro) {
 function renderPager(session, snap) {
   const pager = el("footer", { class: "tsql-pager" });
   const hasPrev = snap.page > 0;
-  const total = snap.total ?? null;
+  // An estimate cannot bound the pager: page forward while pages come back full.
+  const total = snap.total_estimated ? null : (snap.total ?? null);
   const lastPage = total != null ? Math.max(0, Math.ceil(total / snap.page_size) - 1) : null;
   const hasNext = lastPage == null ? snap.rows.length === Number(snap.page_size) : snap.page < lastPage;
   pager.appendChild(

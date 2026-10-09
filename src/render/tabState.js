@@ -1,9 +1,9 @@
-// SQL Explorer — render/tabState: the pane tab title + lifecycle tone.
+// SQL Explorer, render/tabState: the pane tab title + lifecycle tone.
 // Bundled into extension.js by build.mjs.
 import { PANEL_ID, ctx, state } from "../runtime.js";
 
 /** Label for the pane tab/header: "SQL Explorer · <db>[.<table>]" so it shows
- *  which database (and table) is open — like the title-bar "workspace · …". */
+ *  which database (and table) is open, like the title-bar "workspace · …". */
 function currentPaneTitle() {
   const id = state.active;
   if (!id) return "SQL Explorer";

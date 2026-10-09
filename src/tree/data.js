@@ -1,4 +1,4 @@
-// SQL Explorer — tree/data: node-id encoding, the lazy-tree state sets, and the
+// SQL Explorer, tree/data: node-id encoding, the lazy-tree state sets, and the
 // sidecar fetchers that populate them. Bundled into extension.js by build.mjs.
 //
 // The connection list AND schema navigation live in TEDI's left "Databases"
@@ -6,7 +6,7 @@
 // owns the raw data; tree/items renders it and tree/view wires interaction.
 import { connectWithRetry, ensureSession } from "../connections.js";
 import { scopedDatabases } from "../connections/store.js";
-import { state } from "../runtime.js";
+import { connStatus, state } from "../runtime.js";
 import { ensureSidecar, fetchJson } from "../sidecar.js";
 
 const TREE_SEP = "\x01"; // SOH control char; never appears in real identifiers
@@ -31,6 +31,13 @@ export async function ensureConnected(connId) {
   await ensureSidecar();
   const conn = state.connections.find((c) => c.id === connId);
   if (!conn) throw new Error("connection not found");
+  // Known open: skip the round trip. If the helper has since lost it (it was
+  // restarted), the next request answers "not found" and sidecar.js
+  // reconnects and retries on its own.
+  if (connStatus[connId] === "connected") {
+    ensureSession(connId);
+    return;
+  }
   const conns = await fetchJson("/connections").catch(() => null);
   const open = conns?.connections?.some((c) => c.id === connId);
   if (!open) await connectWithRetry(connId);
@@ -50,8 +57,8 @@ export async function treeLoadDatabases(connId) {
   return dbs.map((d) => ({ kind: "db", name: d.name }));
 }
 
-/** A database's children: schemas, or — when the engine exposes a single schema
- *  named like the DB (MySQL/SQLite) — the tables directly (schema collapsed). */
+/** A database's children: schemas, or, when the engine exposes a single schema
+ *  named like the DB (MySQL/SQLite), the tables directly (schema collapsed). */
 export async function treeLoadDbChildren(connId, db) {
   const resp = await fetchJson(
     `/schemas?conn=${encodeURIComponent(connId)}&database=${encodeURIComponent(db)}`,

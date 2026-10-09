@@ -1,4 +1,4 @@
-// SQL Explorer — dom/dateParts: the date/time <-> string conversions behind the
+// SQL Explorer, dom/dateParts: the date/time <-> string conversions behind the
 // picker. Bundled into extension.js by build.mjs.
 //
 // Pure: no DOM, no state. Split from `datePicker.js` because getting these

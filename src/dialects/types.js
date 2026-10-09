@@ -1,4 +1,4 @@
-// SQL Explorer — dialect type contract (JSDoc only; no runtime code).
+// SQL Explorer: dialect type contract (JSDoc only; no runtime code).
 // Documents the shape every descriptor in this folder must satisfy so the
 // registry + helpers can stay fully data-driven. Bundled by build.mjs (emits
 // nothing).

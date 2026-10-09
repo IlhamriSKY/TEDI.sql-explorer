@@ -1,4 +1,4 @@
-// SQL Explorer — render/panel: the pane shell + the stacked editor/results
+// SQL Explorer, render/panel: the pane shell + the stacked editor/results
 // layout (toolbar, CodeMirror query editor, drag splitter, action-SQL strip,
 // results root). Bundled into extension.js by build.mjs.
 import { ensureSession, saveWorkbenchSession } from "../connections.js";
@@ -6,7 +6,7 @@ import { disposePreviewEditors } from "../dialogs.js";
 import { appendIcon, clearChildren, closeAllSelectMenus, el, textBtn } from "../dom.js";
 import { openExportDialog } from "../export.js";
 import { renderTableGrid } from "../grid.js";
-import { cancelActiveQuery, history, renderQueryResult, runActiveQuery } from "../query.js";
+import { cancelActiveQuery, endTransaction, history, renderQueryResult, runActiveQuery } from "../query.js";
 import { ctx, panelRoot, state } from "../runtime.js";
 import { isReadOnly, sqlLanguageForSession } from "../sql.js";
 import { disposeActionSqlEditor, renderActionSqlStrip } from "./actionSql.js";
@@ -26,7 +26,7 @@ function persistSessionSoon() {
 export function renderPanel(container) {
   // The connection list + schema tree now live in TEDI's left "Databases"
   // sidebar, so the panel itself is just the stacked query-editor + results
-  // body — no in-pane sidebar, no own header. That makes it read as a native
+  // body: no in-pane sidebar, no own header. That makes it read as a native
   // pane (the host pane frame supplies the title + drag + close). The
   // `.tsql-body` wrapper is kept so `rerenderMain()` can swap `.tsql-main`.
   const root = el("div", { class: "tsql-root" });
@@ -96,7 +96,7 @@ export function renderEditorAndResults(session) {
   }
   disposePreviewEditors();
   // If this rebuild has no action-SQL strip, renderActionSqlStrip won't run to
-  // self-dispose the prior strip editor — drop it here so it never leaks.
+  // self-dispose the prior strip editor; drop it here so it never leaks.
   disposeActionSqlEditor();
 
   const wrap = el("div", { class: "tsql-main" });
@@ -132,7 +132,7 @@ export function renderEditorAndResults(session) {
       onClick: () => openExportDialog(),
     }),
   );
-  // Collapse / restore the query editor — browsing a table is nicer with the
+  // Collapse / restore the query editor: browsing a table is nicer with the
   // full pane height for the grid. State lives on the (in-memory) session.
   toolbar.appendChild(
     textBtn(
@@ -147,10 +147,14 @@ export function renderEditorAndResults(session) {
       },
     ),
   );
+  // Filled while the editor session is inside a transaction; see syncTxnBar.
+  const txnSlot = el("span", { class: "tsql-txn", attrs: { "data-txn-slot": "1" } });
+  toolbar.appendChild(txnSlot);
+  fillTxnSlot(txnSlot, session);
   if (isReadOnly(session.connId)) {
     const pill = el("span", {
       class: "tsql-ro-pill",
-      attrs: { title: "This connection is read-only — inserts, edits and deletes are disabled." },
+      attrs: { title: "This connection is read-only: inserts, edits and deletes are disabled." },
     });
     appendIcon(pill, "SquareLock02Icon", { size: 11 });
     pill.appendChild(el("span", { text: "Read only" }));
@@ -162,10 +166,10 @@ export function renderEditorAndResults(session) {
   if (!session.editorHidden) renderQueryEditor(wrap, session);
 
   // --- Middle: the SQL a GUI action ran (open table / edit / delete /
-  //     insert). Cleared for editor-run queries — their SQL is in the editor. ---
+  //     insert). Cleared for editor-run queries; their SQL is in the editor. ---
   if (session.actionSql) wrap.appendChild(renderActionSqlStrip(session));
 
-  // --- Bottom: results — the browsed table grid OR a free-form query result. ---
+  // --- Bottom: the results (the browsed table grid OR a free-form query result). ---
   const results = el("div", { class: "tsql-results", attrs: { "data-results-root": "1" } });
   if (session.activeTable) {
     renderTableGrid(results, session);
@@ -178,6 +182,39 @@ export function renderEditorAndResults(session) {
   }
   wrap.appendChild(results);
   return wrap;
+}
+
+/**
+ * Show or clear the "transaction open" pill + Commit / Rollback in the
+ * toolbar, without rebuilding the editor. Called after every editor run.
+ */
+export function syncTxnBar(session) {
+  const slot = panelRoot?.querySelector("[data-txn-slot]");
+  if (slot) fillTxnSlot(slot, session);
+}
+
+function fillTxnSlot(slot, session) {
+  slot.replaceChildren();
+  if (!session.inTransaction) return;
+  const pill = el("span", {
+    class: "tsql-tag tsql-tag--warn",
+    attrs: {
+      title:
+        "This editor's session is inside a transaction. Other sessions do not see its changes until you commit.",
+    },
+  });
+  pill.appendChild(document.createTextNode("Transaction open"));
+  slot.append(
+    pill,
+    textBtn("Commit", "CheckmarkCircle02Icon", {
+      title: "COMMIT the open transaction",
+      onClick: () => endTransaction("COMMIT"),
+    }),
+    textBtn("Rollback", "UndoIcon", {
+      title: "ROLLBACK the open transaction",
+      onClick: () => endTransaction("ROLLBACK"),
+    }),
+  );
 }
 
 /**

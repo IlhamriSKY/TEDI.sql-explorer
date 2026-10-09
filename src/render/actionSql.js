@@ -1,4 +1,4 @@
-// SQL Explorer — render/actionSql: the middle "action-SQL" strip — a read-only,
+// SQL Explorer, render/actionSql: the middle "action-SQL" strip, a read-only,
 // syntax-highlighted view of the SQL a GUI action (open table / edit / delete /
 // insert) just ran, so a click is as transparent as a typed query. Bundled by
 // build.mjs.

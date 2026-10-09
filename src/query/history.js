@@ -1,9 +1,9 @@
-// SQL Explorer — query/history: remember what was run, and let the user pull it
+// SQL Explorer, query/history: remember what was run, and let the user pull it
 // back into the editor. Bundled into extension.js by build.mjs.
 //
 // Every workbench keeps a query history; without one, a statement you spent ten
 // minutes getting right is gone the moment you type over it. Entries are kept
-// per connection in `ctx.settings` (not the keychain — SQL is not a secret, but
+// per connection in `ctx.settings` (not the keychain: SQL is not a secret, but
 // see the note on `record`), newest first, capped so the setting stays small.
 
 import { openCenteredDialog } from "../dialogs.js";

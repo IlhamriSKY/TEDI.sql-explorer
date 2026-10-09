@@ -1,4 +1,4 @@
-// SQL Explorer — query/sqlRefs: parse the table(s) a statement touches and
+// SQL Explorer, query/sqlRefs: parse the table(s) a statement touches and
 // decide whether a SELECT maps 1:1 to one editable base table. Pure string +
 // schema-cache logic, no host calls. Bundled into extension.js by build.mjs.
 
@@ -10,7 +10,7 @@
  * TRUNCATE, CREATE/ALTER/DROP TABLE. Identifiers may be quoted (` " [ ])
  * and may carry up to two qualifiers (`db.schema.table`).
  *
- * Returns `[{ raw, parts: [..lower] }]` — the caller resolves each ref
+ * Returns `[{ raw, parts: [..lower] }]`; the caller resolves each ref
  * against `session.schemaCache`.
  */
 export function parseSqlReferences(sql) {
@@ -55,7 +55,7 @@ export function parseSqlReferences(sql) {
  *  matches. Preference order:
  *    1. Fully-qualified `db.schema.table` matches the input qualifiers
  *    2. Two-part input matches by `db` OR `schema`
- *    3. Bare table name — first cached entry wins, but with a bias toward
+ *    3. Bare table name, first cached entry wins, but with a bias toward
  *       the session's currently-expanded database so a user typing
  *       `users` against an already-expanded `app` DB resolves to `app`'s
  *       users table, not some other DB's. */

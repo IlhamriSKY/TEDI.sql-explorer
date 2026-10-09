@@ -20,13 +20,24 @@ fn bytes_to_string(b: &[u8]) -> String {
     }
 }
 
-fn bytes_payload(b: &[u8]) -> Value {
+/// What a decoded row is for. The grid never reads a blob's bytes (it shows
+/// the size and refuses to edit binary cells), so only an export carries them:
+/// base64-encoding every blob of a 10,000-row result cost gigabytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Cells {
+    Display,
+    Export,
+}
+
+fn bytes_payload(b: &[u8], cells: Cells) -> Value {
     let mut map = Map::new();
     map.insert("__type".into(), Value::String("bytes".into()));
-    map.insert(
-        "b64".into(),
-        Value::String(base64::engine::general_purpose::STANDARD.encode(b)),
-    );
+    if cells == Cells::Export {
+        map.insert(
+            "b64".into(),
+            Value::String(base64::engine::general_purpose::STANDARD.encode(b)),
+        );
+    }
     map.insert("size".into(), Value::from(b.len()));
     Value::Object(map)
 }
@@ -61,7 +72,7 @@ fn json_int(v: i64) -> Value {
 
 /// Decode a MySQL integer that fits in 64 bits. Signed first; fall back to
 /// unsigned because sqlx tags `... UNSIGNED` columns with the UNSIGNED flag,
-/// which makes `i64` incompatible — without the fallback every UNSIGNED
+/// which makes `i64` incompatible, and without the fallback every UNSIGNED
 /// column (including `TINYINT UNSIGNED`, whose type name matches no signed
 /// arm) silently decodes to NULL. The covered types all fit in `i64`, so the
 /// JSON number stays exact. (`BIGINT UNSIGNED` keeps its dedicated string
@@ -81,15 +92,15 @@ fn mysql_uint_safe(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
 
 // ----------------------------- MySQL -----------------------------------------
 
-pub fn decode_mysql_row(row: &sqlx::mysql::MySqlRow) -> Vec<Value> {
+pub fn decode_mysql_row(row: &sqlx::mysql::MySqlRow, cells: Cells) -> Vec<Value> {
     let mut out = Vec::with_capacity(row.columns().len());
     for (i, col) in row.columns().iter().enumerate() {
-        out.push(decode_mysql_cell(row, i, col));
+        out.push(decode_mysql_cell(row, i, col, cells));
     }
     out
 }
 
-fn decode_mysql_cell(row: &sqlx::mysql::MySqlRow, idx: usize, col: &sqlx::mysql::MySqlColumn) -> Value {
+fn decode_mysql_cell(row: &sqlx::mysql::MySqlRow, idx: usize, col: &sqlx::mysql::MySqlColumn, cells: Cells) -> Value {
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
     if let Ok(raw) = row.try_get_raw(idx) {
@@ -165,7 +176,7 @@ fn decode_mysql_cell(row: &sqlx::mysql::MySqlRow, idx: usize, col: &sqlx::mysql:
             .unwrap_or(Value::Null),
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" => {
             row.try_get::<Vec<u8>, _>(idx)
-                .map(|b| bytes_payload(&b))
+                .map(|b| bytes_payload(&b, cells))
                 .unwrap_or(Value::Null)
         }
         // Default text-y types
@@ -183,15 +194,15 @@ fn decode_mysql_cell(row: &sqlx::mysql::MySqlRow, idx: usize, col: &sqlx::mysql:
 
 // --------------------------- PostgreSQL --------------------------------------
 
-pub fn decode_pg_row(row: &sqlx::postgres::PgRow) -> Vec<Value> {
+pub fn decode_pg_row(row: &sqlx::postgres::PgRow, cells: Cells) -> Vec<Value> {
     let mut out = Vec::with_capacity(row.columns().len());
     for (i, col) in row.columns().iter().enumerate() {
-        out.push(decode_pg_cell(row, i, col));
+        out.push(decode_pg_cell(row, i, col, cells));
     }
     out
 }
 
-fn decode_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &sqlx::postgres::PgColumn) -> Value {
+fn decode_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &sqlx::postgres::PgColumn, cells: Cells) -> Value {
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
     if let Ok(raw) = row.try_get_raw(idx) {
@@ -265,7 +276,7 @@ fn decode_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &sqlx::postgres:
             .unwrap_or(Value::Null),
         "BYTEA" => row
             .try_get::<Vec<u8>, _>(idx)
-            .map(|b| bytes_payload(&b))
+            .map(|b| bytes_payload(&b, cells))
             .unwrap_or(Value::Null),
         _ => decode_pg_fallback(row, idx, type_name),
     }
@@ -275,7 +286,7 @@ fn decode_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &sqlx::postgres:
 ///
 /// This used to be "try String, try Vec<u8>, else NULL", which meant every
 /// PostgreSQL ARRAY, user-defined ENUM, INTERVAL and network type rendered as
-/// NULL in the grid — indistinguishable from a real NULL, and silent. Arrays
+/// NULL in the grid, indistinguishable from a real NULL, and silent. Arrays
 /// and enums in particular are ordinary things to have in a schema.
 ///
 /// The ladder, cheapest first:
@@ -322,7 +333,7 @@ fn decode_pg_fallback(row: &sqlx::postgres::PgRow, idx: usize, type_name: &str) 
         return Value::String(s);
     }
     // Enums / domains / citext / xml: right shape, wrong declared type.
-    // `looks_like_text` is the guard that makes this safe — see its comment.
+    // `looks_like_text` is the guard that makes this safe (see its comment).
     if type_name.ends_with("[]") {
         if let Ok(v) = row.try_get_unchecked::<Vec<String>, _>(idx) {
             if v.iter().all(|s| looks_like_text(s)) {
@@ -352,8 +363,8 @@ fn decode_pg_fallback(row: &sqlx::postgres::PgRow, idx: usize, type_name: &str) 
 /// Guard for the `try_get_unchecked::<String>` escape hatch.
 ///
 /// Unchecked decoding runs the String decoder over whatever bytes the column
-/// holds, so it succeeds on any binary encoding that happens to be valid UTF-8
-/// — `macaddr`, `tsvector`, `int4range` and an enum ARRAY all came back as
+/// holds, so it succeeds on any binary encoding that happens to be valid UTF-8.
+/// `macaddr`, `tsvector`, `int4range` and an enum ARRAY all came back as
 /// mojibake, which is worse than the NULL it replaced. Their binary forms carry
 /// length prefixes and OIDs, i.e. control bytes; real text values (an enum
 /// label, xml, citext) do not. Tabs and newlines stay allowed because a genuine
@@ -390,15 +401,15 @@ fn format_interval(iv: &sqlx::postgres::types::PgInterval) -> String {
 
 // ----------------------------- SQLite ----------------------------------------
 
-pub fn decode_sqlite_row(row: &sqlx::sqlite::SqliteRow) -> Vec<Value> {
+pub fn decode_sqlite_row(row: &sqlx::sqlite::SqliteRow, cells: Cells) -> Vec<Value> {
     let mut out = Vec::with_capacity(row.columns().len());
     for (i, col) in row.columns().iter().enumerate() {
-        out.push(decode_sqlite_cell(row, i, col));
+        out.push(decode_sqlite_cell(row, i, col, cells));
     }
     out
 }
 
-fn decode_sqlite_cell(row: &sqlx::sqlite::SqliteRow, idx: usize, col: &sqlx::sqlite::SqliteColumn) -> Value {
+fn decode_sqlite_cell(row: &sqlx::sqlite::SqliteRow, idx: usize, col: &sqlx::sqlite::SqliteColumn, cells: Cells) -> Value {
     // SQLite reports declared (declared) type via column.type_info().name(),
     // which is the column's storage class hint. Sqlx maps common forms to
     // INTEGER / REAL / TEXT / BLOB / NULL. We try each candidate in
@@ -425,7 +436,7 @@ fn decode_sqlite_cell(row: &sqlx::sqlite::SqliteRow, idx: usize, col: &sqlx::sql
     }
     if type_name.contains("BLOB") {
         if let Ok(b) = row.try_get::<Vec<u8>, _>(idx) {
-            return bytes_payload(&b);
+            return bytes_payload(&b, cells);
         }
     }
     // Fallback path: try text → integer → float → bytes.
@@ -443,7 +454,7 @@ fn decode_sqlite_cell(row: &sqlx::sqlite::SqliteRow, idx: usize, col: &sqlx::sql
         };
     }
     if let Ok(b) = row.try_get::<Vec<u8>, _>(idx) {
-        return bytes_payload(&b);
+        return bytes_payload(&b, cells);
     }
     Value::Null
 }

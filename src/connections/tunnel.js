@@ -1,4 +1,4 @@
-// SQL Explorer — connections/tunnel: reach a database only a bastion can see.
+// SQL Explorer, connections/tunnel: reach a database only a bastion can see.
 // Bundled into extension.js by build.mjs.
 //
 // A managed database usually sits in a private subnet: the port is open to a

@@ -1,4 +1,4 @@
-// SQL Explorer — query/editContext: decide whether a free-form query result can
+// SQL Explorer, query/editContext: decide whether a free-form query result can
 // be edited in place, and if so build its edit context. Bundled by build.mjs.
 //
 // Free-form query results are normally read-only, but the common case of a

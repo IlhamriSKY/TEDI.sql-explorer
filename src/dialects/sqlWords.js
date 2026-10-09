@@ -1,4 +1,4 @@
-// SQL Explorer — shared SQL vocabulary for the editor autocomplete.
+// SQL Explorer: shared SQL vocabulary for the editor autocomplete.
 // Engine-neutral keywords / functions / types live here; the engine-specific
 // additions live on each dialect descriptor (see ./mysql.js etc.). Bundled
 // into extension.js by build.mjs.

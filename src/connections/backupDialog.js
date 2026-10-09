@@ -1,4 +1,4 @@
-// SQL Explorer — connections/backupDialog: the passphrase modals that drive
+// SQL Explorer, connections/backupDialog: the passphrase modals that drive
 // export / import of the connection list, plus the file in and out.
 //
 // File I/O goes through the browser (a Blob download, an <input type=file>
@@ -10,7 +10,7 @@ import { el, input, safeToast } from "../dom.js";
 import { ctx, state } from "../runtime.js";
 import { applyBackup, backupSupported, buildBackup, BACKUP_EXTENSION } from "./backup.js";
 
-/** `tedi-sql-connections-2026-08-04.tedi-sql` — dated so successive exports
+/** `tedi-sql-connections-2026-08-04.tedi-sql`, dated so successive exports
  *  don't silently overwrite each other in the Downloads folder. */
 function backupFilename() {
   const d = new Date();
@@ -214,7 +214,7 @@ export async function openImportConnectionsDialog(onDone) {
               // at the next connect attempt.
               if (r.withoutSecrets) {
                 safeToast(
-                  `${r.withoutSecrets} connection${r.withoutSecrets === 1 ? "" : "s"} arrived without a saved password — set it in Edit connection.`,
+                  `${r.withoutSecrets} connection${r.withoutSecrets === 1 ? "" : "s"} arrived without a saved password. Set it in Edit connection.`,
                   "warning",
                 );
               }

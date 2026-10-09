@@ -19,7 +19,6 @@ use axum::http::Method;
 use rand::RngCore;
 use serde_json::json;
 
-use crate::db::close_backend;
 use crate::state::AppState;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -35,6 +34,7 @@ mod query;
 mod routes;
 mod rows;
 mod schema;
+mod session;
 mod sqltext;
 mod state;
 mod value;
@@ -64,7 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .expose_headers(Any);
 
     let app = routes::build_router(state.clone()).layer(cors);
 
@@ -89,10 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conns = state.connections.read().await;
     for (id, conn) in conns.iter() {
         tracing::info!("closing connection {id} on shutdown");
-        // Cloning a backend is cheap (pool is Arc-internal).
-        for backend in conn.all_backends().await {
-            close_backend(backend).await;
-        }
+        conn.close().await;
     }
     Ok(())
 }

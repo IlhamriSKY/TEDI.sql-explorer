@@ -1,24 +1,39 @@
 //! Multi-statement query execution.
 //!
 //! `/query` accepts a free-form SQL script. We split it into individual
-//! statements (honouring quoting + comment state), classify each as
-//! read / write / ddl, enforce the connection's `allow_writes` flag, and
-//! run them in order. The response contains one entry per statement so the
-//! frontend can render each result tab independently.
+//! statements (honouring the engine's quoting + comments), enforce the
+//! connection's `allow_writes` flag, and run them in order on one pinned
+//! connection (see `session.rs`). The response holds one entry per statement
+//! so the frontend can render each result tab independently.
 
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::postgres::{PgDatabaseError, PgErrorPosition};
 use sqlx::{Column, Row, TypeInfo};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::db::Backend;
-use crate::sqltext::{StatementKind, classify, is_read_only_safe, split_statements};
+use crate::db::{Backend, BackendKind};
 use crate::error::{AppError, AppResult};
-use crate::schema::{escape_mysql_ident, escape_pg_ident};
-use crate::state::ConnectionConfig;
-use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row};
+use crate::session::{is_connection_error, PinnedConn, Session, SessionContext};
+use crate::sqltext::{classify, is_read_only_safe, returns_rows, split_statements, StatementKind};
+use crate::state::Connection;
+use crate::value::{decode_mysql_row, decode_pg_row, decode_sqlite_row, Cells};
+
+/// Ceiling on the decoded rows one `/query` holds, on top of the row limit.
+/// A row cap alone does not bound memory: 10,000 rows of wide text is
+/// gigabytes. The result is marked truncated when this runs out first.
+const RESULT_BYTE_BUDGET: usize = 32 * 1024 * 1024;
+/// An editor session idle this long is closed; an open transaction on it is
+/// rolled back, so a forgotten `BEGIN` cannot hold locks indefinitely.
+const EDITOR_IDLE_CLOSE: Duration = Duration::from_secs(10 * 60);
+/// An editor session idle this long gets its context re-applied before the
+/// next run, which doubles as a liveness probe (servers drop idle sockets).
+const EDITOR_PROBE_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 pub struct QueryRequest {
@@ -34,16 +49,17 @@ pub struct QueryRequest {
     /// id to abort an in-flight query.
     #[serde(default)]
     pub request_id: Option<String>,
-    /// Active database context. MySQL: pins the session with `USE <db>` so
-    /// unqualified table names resolve. PostgreSQL: selects which per-database
-    /// pool answers (PG binds one database per connection). SQLite: ignored.
+    /// Active database context. MySQL: `USE <db>`. PostgreSQL: selects which
+    /// per-database pool answers (PG binds one database per connection).
     #[serde(default)]
     pub database: Option<String>,
-    /// Active schema context. PostgreSQL only: becomes the session
-    /// `search_path`, which is what actually resolves an unqualified table
-    /// name there — the DATABASE name never does.
+    /// Active schema context. PostgreSQL only: becomes `search_path`.
     #[serde(default)]
     pub schema: Option<String>,
+    /// Run on the connection's long-lived editor session, so a transaction or
+    /// `SET` survives into the next run. Off for one-off callers (AI tools).
+    #[serde(default)]
+    pub session: bool,
 }
 
 #[derive(Serialize)]
@@ -52,6 +68,12 @@ pub struct QueryResponse {
     pub request_id: String,
     /// True when at least one statement was cancelled / timed out.
     pub aborted: bool,
+    /// Whether the editor session is inside a transaction after this run.
+    pub in_transaction: bool,
+    /// Something the user should know that is not one statement's result,
+    /// e.g. a transaction that was rolled back because its connection died.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -62,6 +84,9 @@ pub enum StatementResult {
         columns: Vec<ColumnHeader>,
         rows: Vec<Vec<Value>>,
         truncated: bool,
+        /// The byte budget, not the row limit, cut this result short.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        truncated_by_size: bool,
         elapsed_ms: u64,
     },
     Exec {
@@ -82,213 +107,308 @@ pub struct ColumnHeader {
     pub data_type: String,
 }
 
-/// Everything a batch needs beyond the connection itself.
-pub struct ExecuteOptions<'a> {
+/// Run one `/query` request on the right session and report the outcome.
+/// `pid_slot` is where the server-side connection id is published for
+/// `/cancel`.
+pub async fn run_query(
+    conn: &Arc<Connection>,
+    req: &QueryRequest,
+    cancel: CancellationToken,
+    pid_slot: &RwLock<Option<i64>>,
+) -> AppResult<(Vec<StatementResult>, bool, Option<String>)> {
+    if split_statements(&req.sql, conn.kind).is_empty() {
+        return Err(AppError::BadRequest("empty SQL".into()));
+    }
+    // Fall back to the connection's saved database, then to the one the pool
+    // is attached to, so MySQL always has a `USE` to run and a pooled
+    // connection cannot leak a previous batch's database into this one.
+    let database = req
+        .database
+        .as_deref()
+        .or(conn.default_database.as_deref())
+        .or(conn.current_database.as_deref())
+        .map(str::to_string);
+    let ctx = SessionContext {
+        database: database.clone(),
+        schema: req.schema.clone(),
+    };
+    let backend = conn.backend_for(database.as_deref()).await?;
+    let opts = BatchOptions {
+        allow_writes: conn.config.allow_writes,
+        row_limit: req.row_limit.unwrap_or(conn.config.row_limit),
+        timeout: req
+            .timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(conn.config.query_timeout),
+        cancel,
+    };
+
+    if !req.session {
+        let mut session = Session::open(&backend, None, false).await?.with_pid().await;
+        session.apply_context(&ctx, false).await?;
+        *pid_slot.write().await = session.backend_pid;
+        let (out, _) = execute_batch(&mut session, &backend, &req.sql, &opts).await;
+        // Dropping a session left inside a transaction closes its connection,
+        // which rolls the transaction back (see session.rs).
+        let notice = session
+            .in_transaction
+            .then(|| "The batch left a transaction open, so it was rolled back. Add COMMIT to keep the changes.".to_string());
+        return Ok((out, false, notice));
+    }
+
+    let pool_database = (conn.kind == BackendKind::Postgres)
+        .then(|| database.clone())
+        .flatten();
+    let mut guard = conn
+        .editor
+        .try_lock()
+        .map_err(|_| AppError::BadRequest("a query is still running in this editor".into()))?;
+    // Taken only once the run goes ahead, so an early refusal keeps it.
+    let mut notice: Option<String> = None;
+
+    // PostgreSQL: a session belongs to one database.
+    if guard
+        .as_ref()
+        .is_some_and(|s| s.pool_database != pool_database)
+    {
+        if guard.as_ref().is_some_and(|s| s.in_transaction) {
+            return Err(AppError::BadRequest(
+                "a transaction is open on another database. COMMIT or ROLLBACK it before switching"
+                    .into(),
+            ));
+        }
+        if let Some(old) = guard.take() {
+            old.close().await;
+        }
+    }
+    if let Some(session) = guard.as_mut() {
+        let probe = session.last_used.elapsed() > EDITOR_PROBE_AFTER && !session.in_transaction;
+        if let Err(e) = session.apply_context(&ctx, probe).await {
+            if is_connection_error(&e) {
+                if session.in_transaction {
+                    notice = Some(LOST_TXN.into());
+                }
+                guard.take();
+            } else if !session.in_transaction {
+                return Err(e.into());
+            }
+            // Inside a failed PostgreSQL transaction every statement errors
+            // until ROLLBACK, `SET` included; let the batch run so it can.
+        }
+    }
+    if guard.is_none() {
+        let mut session = Session::open(&backend, pool_database.clone(), true)
+            .await?
+            .with_pid()
+            .await;
+        session.apply_context(&ctx, false).await?;
+        *guard = Some(session);
+    }
+    let session = guard.as_mut().expect("session opened above");
+    *pid_slot.write().await = session.backend_pid;
+    let was_in_transaction = session.in_transaction;
+    let (mut out, mut broken) = execute_batch(session, &backend, &req.sql, &opts).await;
+    session.last_used = Instant::now();
+    if broken {
+        guard.take();
+        if was_in_transaction {
+            notice = Some(LOST_TXN.into());
+        } else if out.len() == 1 && first_statement_is_read(&req.sql, conn.kind) {
+            // The connection died under the FIRST statement (the server
+            // dropped an idle socket), and a read is safe to run again. A
+            // write is not: the server may already have applied it.
+            let mut fresh = Session::open(&backend, pool_database, true)
+                .await?
+                .with_pid()
+                .await;
+            fresh.apply_context(&ctx, false).await?;
+            *pid_slot.write().await = fresh.backend_pid;
+            (out, broken) = execute_batch(&mut fresh, &backend, &req.sql, &opts).await;
+            fresh.last_used = Instant::now();
+            if !broken {
+                *guard = Some(fresh);
+            }
+        }
+    }
+    if notice.is_none() {
+        notice = conn.take_notice();
+    }
+    let in_transaction = guard.as_ref().is_some_and(|s| s.in_transaction);
+    drop(guard);
+    schedule_idle_close(conn);
+    Ok((out, in_transaction, notice))
+}
+
+fn first_statement_is_read(sql: &str, kind: BackendKind) -> bool {
+    split_statements(sql, kind)
+        .first()
+        .is_some_and(|s| classify(s, kind) == StatementKind::Read)
+}
+
+const LOST_TXN: &str =
+    "The connection was lost, so the open transaction was rolled back by the server.";
+
+/// Close the editor session once it has sat idle for `EDITOR_IDLE_CLOSE`.
+/// Each run bumps the epoch, so only the timer armed by the LAST run fires.
+fn schedule_idle_close(conn: &Arc<Connection>) {
+    let epoch = conn.editor_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+    let weak = Arc::downgrade(conn);
+    tokio::spawn(async move {
+        tokio::time::sleep(EDITOR_IDLE_CLOSE).await;
+        let Some(conn) = weak.upgrade() else { return };
+        if conn.editor_epoch.load(Ordering::Relaxed) != epoch {
+            return;
+        }
+        let Ok(mut guard) = conn.editor.try_lock() else {
+            return;
+        };
+        if let Some(session) = guard.take() {
+            if session.in_transaction {
+                conn.set_notice(format!(
+                    "The open transaction was rolled back after {} minutes idle.",
+                    EDITOR_IDLE_CLOSE.as_secs() / 60
+                ));
+            }
+            session.close().await;
+        }
+    });
+}
+
+pub struct BatchOptions {
+    pub allow_writes: bool,
     pub row_limit: u64,
     pub timeout: Duration,
     pub cancel: CancellationToken,
-    /// MySQL: the database to `USE`. PostgreSQL: informational (which pool
-    /// answers is already decided by the caller).
-    pub database: Option<&'a str>,
-    /// PostgreSQL: the schema that becomes `search_path`.
-    pub schema: Option<&'a str>,
-    /// Filled in with the server-side connection id once the batch is pinned,
-    /// so `/cancel` can stop the statement in the database.
-    pub backend_pid: Option<&'a std::sync::Arc<tokio::sync::RwLock<Option<i64>>>>,
 }
 
-pub async fn execute(
+/// Run every statement of `sql` on `session`, in order. The second value is
+/// true when the connection itself died, so the caller must drop the session.
+pub async fn execute_batch(
+    session: &mut Session,
     backend: &Backend,
-    config: &ConnectionConfig,
     sql: &str,
-    opts: ExecuteOptions<'_>,
-) -> AppResult<Vec<StatementResult>> {
-    let ExecuteOptions { row_limit, timeout, cancel, database, schema, backend_pid } = opts;
-    let statements = split_statements(sql);
-    if statements.is_empty() {
-        return Err(AppError::BadRequest("empty SQL".into()));
-    }
-
-    // Acquire ONE connection and pin it for the whole batch. Two things need
-    // this, not just the database context:
-    //   - session state (`USE <db>` / `SET search_path`) must survive across
-    //     statements;
-    //   - so must a transaction. `BEGIN; UPDATE …; COMMIT;` run through
-    //     `pool.execute()` can land on three different physical connections,
-    //     which leaves the UPDATE in an open transaction on a connection
-    //     nobody commits. Pinning unconditionally is what makes explicit
-    //     transactions in the query editor behave.
-    // MySQL `USE` (and some `SET` / `SHOW` variants) are not supported by
-    // the prepared-statement protocol and return error 1295. Send these
-    // session-control statements via the text protocol by calling
-    // `Executor::execute(&str)` directly, which sqlx routes through the
-    // simple-query path (no `COM_STMT_PREPARE`).
-    use sqlx::Executor as _;
-    let mut pinned: Option<PinnedConn> = match backend {
-        Backend::Mysql(pool) => {
-            let mut conn = pool.acquire().await?;
-            // Same session-state caveat as the Postgres arm below: the pooled
-            // connection keeps whatever database a previous batch selected.
-            // MySQL has no "select no database", so the caller passes the
-            // connection's own current database as the fallback (see
-            // `handle_query`), which makes this `USE` run on every batch.
-            if let Some(db) = database.filter(|d| !d.is_empty()) {
-                let use_sql = format!("USE {}", escape_mysql_ident(db)?);
-                (&mut *conn).execute(use_sql.as_str()).await?;
-            }
-            Some(PinnedConn::Mysql(conn))
-        }
-        Backend::Postgres(pool) => {
-            let mut conn = pool.acquire().await?;
-            // PostgreSQL resolves unqualified names through `search_path`,
-            // which holds SCHEMAS. Feeding it the database name (as this used
-            // to) sets a search_path that matches nothing, so every
-            // unqualified `SELECT * FROM users` failed. `public` stays on the
-            // path so extensions and shared types keep resolving.
-            //
-            // The `else` arm is not optional: `SET` is session state, and the
-            // connection goes back to the pool carrying it. Without an
-            // explicit reset, a later batch that names no schema silently
-            // inherits the previous batch's search_path and resolves
-            // unqualified names in a schema the caller never asked for.
-            let set_sql = match schema.filter(|s| !s.is_empty()) {
-                Some(sc) => format!("SET search_path TO {}, public", escape_pg_ident(sc)?),
-                None => "SET search_path TO DEFAULT".to_string(),
-            };
-            (&mut *conn).execute(set_sql.as_str()).await?;
-            Some(PinnedConn::Postgres(conn))
-        }
-        Backend::Sqlite(_) => None,
-    };
-
-    // Publish the server-side connection id so `/cancel` can stop the query
-    // in the database, not just drop our end of the socket.
-    if let Some(slot) = backend_pid {
-        if let Some(pid) = pinned_backend_pid(pinned.as_mut()).await {
-            *slot.write().await = Some(pid);
-        }
-    }
-
+    opts: &BatchOptions,
+) -> (Vec<StatementResult>, bool) {
+    let kind = session.kind;
+    let statements = split_statements(sql, kind);
+    let mut budget = RESULT_BYTE_BUDGET;
     let mut out = Vec::with_capacity(statements.len());
     for stmt in statements {
-        if cancel.is_cancelled() {
-            out.push(StatementResult::Error {
-                sql: stmt,
-                error: "canceled".into(),
-                elapsed_ms: 0,
-            });
+        if opts.cancel.is_cancelled() {
+            out.push(error_result(stmt, "canceled".into(), 0));
             break;
         }
-        let kind = classify(&stmt);
-        if !config.allow_writes && !is_read_only_safe(&stmt, kind) {
-            out.push(StatementResult::Error {
-                sql: stmt,
-                error: "connection is read-only. Enable writes in the connection settings".into(),
-                elapsed_ms: 0,
-            });
+        if !opts.allow_writes && !is_read_only_safe(&stmt, kind) {
+            out.push(error_result(
+                stmt,
+                "connection is read-only. Enable writes in the connection settings".into(),
+                0,
+            ));
             continue;
         }
+        let is_read = returns_rows(&stmt, kind);
         let start = Instant::now();
         let result = tokio::select! {
             biased;
-            _ = cancel.cancelled() => Err(AppError::Canceled),
+            _ = opts.cancel.cancelled() => Err(AppError::Canceled),
             r = tokio::time::timeout(
-                timeout,
-                run_one(backend, pinned.as_mut(), &stmt, kind, row_limit),
-            ) => {
-                match r {
-                    Err(_) => Err(AppError::Timeout),
-                    Ok(inner) => inner,
+                opts.timeout,
+                run_one(&mut session.conn, &stmt, is_read, opts.row_limit, &mut budget),
+            ) => match r {
+                Err(_) => Err(AppError::Timeout),
+                Ok(Ok(sr)) => Ok(sr),
+                Ok(Err(e)) => {
+                    if is_connection_error(&e) {
+                        out.push(error_result(stmt, describe_error(&e, ""), elapsed(start)));
+                        return (out, true);
+                    }
+                    Err(AppError::Database(describe_error(&e, &stmt)))
                 }
-            }
+            },
         };
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed_ms = elapsed(start);
         match result {
             Ok(mut sr) => {
-                stamp_elapsed(&mut sr, elapsed);
+                session.observe(&stmt);
+                stamp_elapsed(&mut sr, elapsed_ms);
                 out.push(sr);
             }
             Err(AppError::Canceled) => {
-                out.push(StatementResult::Error {
-                    sql: stmt,
-                    error: "canceled".into(),
-                    elapsed_ms: elapsed,
-                });
+                out.push(error_result(stmt, "canceled".into(), elapsed_ms));
                 break;
             }
             Err(AppError::Timeout) => {
-                // Dropping the future only stops US waiting. The server keeps
-                // executing the statement (holding its locks), and the pinned
-                // connection stays stuck behind it — so every REMAINING
-                // statement in the batch timed out too, in a cascade. Tell the
-                // server to abort, which also frees the connection to carry on
-                // with the rest of the batch.
-                if let Some(pid) = read_backend_pid(backend_pid).await {
+                // Dropping the future only stops US waiting: the server keeps
+                // executing (holding its locks) and the pinned connection stays
+                // stuck behind it, so every remaining statement would time out
+                // too. Tell the server to abort.
+                if let Some(pid) = session.backend_pid {
                     cancel_on_server(backend, pid).await;
                 }
-                out.push(StatementResult::Error {
-                    sql: stmt,
-                    error: format!("timed out after {} ms", timeout.as_millis()),
-                    elapsed_ms: elapsed,
-                });
+                let msg = format!("timed out after {} ms", opts.timeout.as_millis());
+                out.push(error_result(stmt, msg, elapsed_ms));
             }
-            Err(e) => out.push(StatementResult::Error {
-                sql: stmt,
-                error: e.to_string(),
-                elapsed_ms: elapsed,
-            }),
+            Err(AppError::Database(msg)) => out.push(error_result(stmt, msg, elapsed_ms)),
+            Err(e) => out.push(error_result(stmt, e.to_string(), elapsed_ms)),
         }
     }
-    Ok(out)
+    (out, false)
 }
 
-/// Holds the pool-acquired connection pinned for the batch, so session state
-/// and open transactions survive across its statements. Dropped at the end of
-/// `execute()` to return the connection to the pool. SQLite is single-writer
-/// and has no session/database concept, so it never pins.
-enum PinnedConn {
-    Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
-    Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
+fn elapsed(start: Instant) -> u64 {
+    start.elapsed().as_millis() as u64
 }
 
-/// The database server's own id for the pinned connection (`CONNECTION_ID()`
-/// on MySQL, `pg_backend_pid()` on PostgreSQL). Best-effort: a failure just
-/// means `/cancel` falls back to abandoning the request locally.
-async fn pinned_backend_pid(pinned: Option<&mut PinnedConn>) -> Option<i64> {
-    use sqlx::Row as _;
-    match pinned? {
-        PinnedConn::Mysql(conn) => sqlx::query("SELECT CONNECTION_ID() AS id")
-            .fetch_one(&mut **conn)
-            .await
-            .ok()
-            .and_then(|r| {
-                r.try_get::<u64, _>("id")
-                    .map(|v| v as i64)
-                    .or_else(|_| r.try_get::<i64, _>("id"))
-                    .ok()
-            }),
-        PinnedConn::Postgres(conn) => sqlx::query("SELECT pg_backend_pid() AS id")
-            .fetch_one(&mut **conn)
-            .await
-            .ok()
-            .and_then(|r| r.try_get::<i32, _>("id").map(i64::from).ok()),
+fn error_result(sql: String, error: String, elapsed_ms: u64) -> StatementResult {
+    StatementResult::Error {
+        sql,
+        error,
+        elapsed_ms,
     }
 }
 
-/// The server-side connection id published by `execute`, if it got one.
-async fn read_backend_pid(
-    slot: Option<&std::sync::Arc<tokio::sync::RwLock<Option<i64>>>>,
-) -> Option<i64> {
-    match slot {
-        Some(s) => *s.read().await,
-        None => None,
+/// The database's message, plus what PostgreSQL adds: where in the statement
+/// it failed, and its DETAIL / HINT lines.
+fn describe_error(e: &sqlx::Error, stmt: &str) -> String {
+    let mut msg = e.to_string();
+    let Some(pg) = e
+        .as_database_error()
+        .and_then(|d| d.try_downcast_ref::<PgDatabaseError>())
+    else {
+        return msg;
+    };
+    if let Some(PgErrorPosition::Original(pos)) = pg.position() {
+        let (line, col) = line_col(stmt, pos);
+        msg.push_str(&format!(" (line {line}, column {col})"));
     }
+    if let Some(detail) = pg.detail() {
+        msg.push_str(&format!("\nDETAIL: {detail}"));
+    }
+    if let Some(hint) = pg.hint() {
+        msg.push_str(&format!("\nHINT: {hint}"));
+    }
+    msg
+}
+
+/// 1-based line and column of the 1-based character position `pos`.
+fn line_col(text: &str, pos: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for c in text.chars().take(pos.saturating_sub(1)) {
+        if c == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
 }
 
 /// Ask the server to abort whatever `backend_pid` is running. Dropping the
 /// Rust future only closes our socket; without this the database keeps
 /// grinding through the statement (and holding its locks) after "Stop".
-/// Runs on a SEPARATE pool connection — the busy one won't answer.
+/// Runs on a SEPARATE pool connection, since the busy one won't answer.
 pub async fn cancel_on_server(backend: &Backend, backend_pid: i64) {
     let result = match backend {
         Backend::Mysql(pool) => sqlx::query(&format!("KILL QUERY {backend_pid}"))
@@ -308,115 +428,145 @@ pub async fn cancel_on_server(backend: &Backend, backend_pid: i64) {
     }
 }
 
-fn stamp_elapsed(sr: &mut StatementResult, elapsed_ms: u64) {
+fn stamp_elapsed(sr: &mut StatementResult, ms: u64) {
     match sr {
-        StatementResult::Rows { elapsed_ms: e, .. } => *e = elapsed_ms,
-        StatementResult::Exec { elapsed_ms: e, .. } => *e = elapsed_ms,
-        StatementResult::Error { elapsed_ms: e, .. } => *e = elapsed_ms,
+        StatementResult::Rows { elapsed_ms, .. }
+        | StatementResult::Exec { elapsed_ms, .. }
+        | StatementResult::Error { elapsed_ms, .. } => *elapsed_ms = ms,
     }
 }
 
-/// Headers from a preflight `prepare`, so a 0-row result still names its
-/// columns. sqlx caches the prepared statement, so the fetch that follows
-/// reuses it instead of paying a second round-trip.
-macro_rules! prepared_headers {
-    ($exec:expr, $sql:expr) => {{
-        use sqlx::{Executor as _, Statement as _};
-        $exec.prepare($sql).await.ok().map(|s| {
-            s.columns()
+/// Rough serialized size of a decoded row, for the byte budget.
+fn approx_size(v: &Value) -> usize {
+    match v {
+        Value::Null | Value::Bool(_) => 5,
+        Value::Number(_) => 12,
+        Value::String(s) => s.len() + 2,
+        Value::Array(a) => 2 + a.iter().map(approx_size).sum::<usize>(),
+        Value::Object(o) => {
+            2 + o
                 .iter()
-                .map(|c| ColumnHeader {
-                    name: c.name().to_string(),
-                    data_type: c.type_info().name().to_string(),
-                })
-                .collect::<Vec<_>>()
-        })
-    }};
+                .map(|(k, v)| k.len() + 3 + approx_size(v))
+                .sum::<usize>()
+        }
+    }
 }
 
-/// Read at most `limit` rows, decoding as we go and stopping the moment the
-/// cap is hit.
-///
-/// This used to be `fetch_all(..).take(limit)`, which pulls the WHOLE result
-/// set over the wire and into memory before throwing most of it away — a
-/// `SELECT * FROM` a large table would balloon the helper's RSS (or kill it)
-/// no matter how low the row cap was set. Streaming means the cap actually
-/// caps. Reading one row past `limit` is what tells us the result was
-/// truncated; dropping the stream there stops the transfer.
-macro_rules! fetch_capped {
-    ($exec:expr, $sql:expr, $limit:expr, $decode:path) => {{
+fn headers<C: Column>(cols: &[C]) -> Vec<ColumnHeader> {
+    cols.iter()
+        .map(|c| ColumnHeader {
+            name: c.name().to_string(),
+            data_type: c.type_info().name().to_string(),
+        })
+        .collect()
+}
+
+/// MySQL error 1295: the statement is not allowed through the prepared
+/// protocol (some SHOW / CALL forms), so it has to go as plain text.
+fn needs_text_protocol(e: &sqlx::Error) -> bool {
+    e.as_database_error().and_then(|d| d.code()).as_deref() == Some("1295")
+}
+
+/// Drain a row stream into a `Rows` result, honouring the row and byte caps.
+macro_rules! collect_rows {
+    ($stream:expr, $limit:expr, $budget:expr, $decode:path) => {{
         use futures_util::StreamExt as _;
-        let mut stream = sqlx::query($sql).fetch($exec);
-        let mut decoded: Vec<Vec<Value>> = Vec::new();
-        let mut fallback_headers: Option<Vec<ColumnHeader>> = None;
+        let mut stream = $stream;
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut columns = None;
         let mut truncated = false;
+        let mut truncated_by_size = false;
+        let mut failed = None;
         while let Some(row) = stream.next().await {
-            let row = row?;
-            if decoded.len() as u64 >= $limit {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
+            };
+            if rows.len() as u64 >= $limit {
                 truncated = true;
                 break;
             }
-            if fallback_headers.is_none() {
-                fallback_headers = Some(
-                    row.columns()
-                        .iter()
-                        .map(|c| ColumnHeader {
-                            name: c.name().to_string(),
-                            data_type: c.type_info().name().to_string(),
-                        })
-                        .collect(),
-                );
+            if *$budget == 0 {
+                truncated = true;
+                truncated_by_size = true;
+                break;
             }
-            decoded.push($decode(&row));
+            if columns.is_none() {
+                columns = Some(headers(row.columns()));
+            }
+            let decoded = $decode(&row, Cells::Display);
+            *$budget = $budget.saturating_sub(decoded.iter().map(approx_size).sum());
+            rows.push(decoded);
         }
         drop(stream);
-        (decoded, fallback_headers, truncated)
+        match failed {
+            Some(e) => Err(e),
+            None => Ok((rows, columns, truncated, truncated_by_size)),
+        }
     }};
 }
 
-/// One `(exec, decode)` pair's read + exec arms. The five call sites below
-/// differ only in which executor they hand over and how a row decodes.
+/// One statement on one executor. Reads stream at most `limit` rows (and at
+/// most `budget` bytes), decoding as they arrive and dropping the stream the
+/// moment either cap is hit, so the cap limits the transfer, not just the
+/// display. The preflight `prepare` names the columns of a 0-row result; sqlx
+/// caches the statement, so the fetch reuses it.
 macro_rules! run_stmt {
-    ($exec:expr, $sql:expr, $is_read:expr, $limit:expr, $decode:path) => {{
+    ($exec:expr, $sql:expr, $is_read:expr, $limit:expr, $budget:expr, $decode:path) => {{
+        use sqlx::{Executor as _, Statement as _};
         if $is_read {
-            let headers = prepared_headers!($exec, $sql);
-            let (rows, fallback, truncated) = fetch_capped!($exec, $sql, $limit, $decode);
+            let prepared = $exec.prepare($sql).await.ok().map(|s| headers(s.columns()));
+            let mut got = collect_rows!(sqlx::query($sql).fetch(&mut *$exec), $limit, $budget, $decode);
+            if matches!(&got, Err(e) if needs_text_protocol(e)) {
+                got = collect_rows!(sqlx::raw_sql($sql).fetch(&mut *$exec), $limit, $budget, $decode);
+            }
+            let (rows, columns, truncated, truncated_by_size) = got?;
             Ok(StatementResult::Rows {
                 sql: $sql.to_string(),
-                columns: headers.or(fallback).unwrap_or_default(),
+                columns: prepared.or(columns).unwrap_or_default(),
                 rows,
                 truncated,
+                truncated_by_size,
                 elapsed_ms: 0,
             })
         } else {
-            use sqlx::Executor as _;
-            let r = $exec.execute(sqlx::query($sql)).await?;
-            Ok(StatementResult::Exec {
-                sql: $sql.to_string(),
-                rows_affected: r.rows_affected(),
-                elapsed_ms: 0,
-            })
+            // Text protocol: transaction control and many session statements
+            // are refused by MySQL's prepared protocol, and a one-off UPDATE
+            // gains nothing from a server-side prepared statement.
+            let r = $exec.execute($sql).await?;
+            Ok(StatementResult::Exec { sql: $sql.to_string(), rows_affected: r.rows_affected(), elapsed_ms: 0 })
         }
     }};
 }
 
 async fn run_one(
-    backend: &Backend,
-    pinned: Option<&mut PinnedConn>,
+    conn: &mut PinnedConn,
     sql: &str,
-    kind: StatementKind,
-    row_limit: u64,
-) -> AppResult<StatementResult> {
-    let is_read = matches!(kind, StatementKind::Read | StatementKind::Unknown);
-    match (backend, pinned) {
-        (_, Some(PinnedConn::Mysql(conn))) => {
-            run_stmt!(&mut **conn, sql, is_read, row_limit, decode_mysql_row)
+    is_read: bool,
+    limit: u64,
+    budget: &mut usize,
+) -> sqlx::Result<StatementResult> {
+    match conn {
+        PinnedConn::Mysql(c) => run_stmt!(&mut **c, sql, is_read, limit, budget, decode_mysql_row),
+        PinnedConn::Postgres(c) => run_stmt!(&mut **c, sql, is_read, limit, budget, decode_pg_row),
+        PinnedConn::Sqlite(c) => {
+            run_stmt!(&mut **c, sql, is_read, limit, budget, decode_sqlite_row)
         }
-        (_, Some(PinnedConn::Postgres(conn))) => {
-            run_stmt!(&mut **conn, sql, is_read, row_limit, decode_pg_row)
-        }
-        (Backend::Mysql(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_mysql_row),
-        (Backend::Postgres(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_pg_row),
-        (Backend::Sqlite(pool), _) => run_stmt!(pool, sql, is_read, row_limit, decode_sqlite_row),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line_col;
+
+    #[test]
+    fn maps_a_character_position_to_line_and_column() {
+        assert_eq!(line_col("SELECT x", 8), (1, 8));
+        assert_eq!(line_col("SELECT 1\nFROM nope", 15), (2, 6));
+        // Positions count characters, not bytes.
+        assert_eq!(line_col("SELECT 'é'\n, x", 14), (2, 3));
     }
 }

@@ -1,9 +1,9 @@
-// SQL Explorer — query/run: run + cancel the active query. Bundled by build.mjs.
+// SQL Explorer, query/run: run + cancel the active query. Bundled by build.mjs.
 import { ensureSession } from "../connections.js";
 import { getDialect } from "../dialects/index.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { clearChildren, el, safeToast } from "../dom.js";
-import { setActionSql } from "../render.js";
+import { setActionSql, syncTxnBar } from "../render.js";
 import { panelRoot, state } from "../runtime.js";
 import { ensureSidecar, fetchJson } from "../sidecar.js";
 import { destructiveReason, sqlLanguageForSession } from "../sql.js";
@@ -67,7 +67,7 @@ export async function runActiveQuery(opts = {}) {
   session.requestId = requestId;
   session.activeTable = null;
   session.result = null;
-  // A typed query isn't a GUI action — clear the middle action-SQL strip
+  // A typed query isn't a GUI action: clear the middle action-SQL strip
   // (its SQL is already in the editor right above). An Explain is the
   // exception: what ran is NOT what is in the editor, so show it.
   setActionSql(session, opts.explain ? sql : null);
@@ -93,10 +93,14 @@ export async function runActiveQuery(opts = {}) {
         // database only selects which per-database pool answers).
         database: session.currentDatabase ?? undefined,
         schema: session.currentSchema ?? undefined,
+        // The editor's own long-lived session: BEGIN in one run and COMMIT in
+        // a later one land on the same server connection.
+        session: true,
       },
     });
     session.result = resp;
-    // Record only what the server accepted, and only the user's own SQL —
+    applySessionState(session, resp);
+    // Record only what the server accepted, and only the user's own SQL , 
     // an Explain is a wrapper this module built, not something to replay.
     if (!opts.explain) void record(session.connId, sql);
   } catch (err) {
@@ -109,6 +113,39 @@ export async function runActiveQuery(opts = {}) {
       const root = panelRoot.querySelector("[data-results-root]");
       if (root) renderQueryResult(root, session);
     }
+  }
+}
+
+/** Mirror the helper's view of the editor session (transaction state, and
+ *  anything it needs to tell the user) into the toolbar. */
+function applySessionState(session, resp) {
+  session.inTransaction = Boolean(resp?.in_transaction);
+  syncTxnBar(session);
+  if (resp?.notice) safeToast(resp.notice, "warning");
+}
+
+/** COMMIT or ROLLBACK the editor session's open transaction, leaving the
+ *  result on screen as it is. */
+export async function endTransaction(action) {
+  const session = state.active ? state.sessions[state.active] : null;
+  if (!session) return;
+  try {
+    const resp = await fetchJson("/query", {
+      method: "POST",
+      body: {
+        conn: session.connId,
+        sql: action,
+        database: session.currentDatabase ?? undefined,
+        schema: session.currentSchema ?? undefined,
+        session: true,
+      },
+    });
+    const failed = resp?.statements?.find((s) => s.kind === "error");
+    applySessionState(session, resp);
+    if (failed) safeToast(`${action} failed: ${failed.error}`, "error");
+    else safeToast(action === "COMMIT" ? "Transaction committed" : "Transaction rolled back", "success");
+  } catch (err) {
+    safeToast(`${action} failed: ${err?.message ?? err}`, "error");
   }
 }
 
@@ -125,7 +162,7 @@ export async function cancelActiveQuery() {
     // tells us it also told the database to stop, which is what actually
     // releases the locks a long UPDATE is holding.
     if (resp?.canceled && !resp?.server_canceled) {
-      safeToast("Stopped waiting — the server may still be running the statement.", "warning");
+      safeToast("Stopped waiting, but the server may still be running the statement.", "warning");
     }
   } catch (err) {
     safeToast(`Cancel failed: ${err?.message ?? err}`, "error");

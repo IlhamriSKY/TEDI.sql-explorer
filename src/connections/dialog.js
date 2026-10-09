@@ -1,4 +1,4 @@
-// SQL Explorer — connections/dialog: the New/Edit connection modal. The engine
+// SQL Explorer, connections/dialog: the New/Edit connection modal. The engine
 // list + host/file fields + TLS options are driven by the dialect registry.
 // Bundled into extension.js by build.mjs.
 import { getDialect, listDialects } from "../dialects/index.js";

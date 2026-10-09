@@ -1,4 +1,4 @@
-// SQL Explorer — SQLite dialect descriptor. Bundled by build.mjs.
+// SQL Explorer: SQLite dialect descriptor. Bundled by build.mjs.
 // See ./mysql.js for the field-by-field contract.
 //
 // SQLite is file-based: the connection dialog shows a file-path + read-only

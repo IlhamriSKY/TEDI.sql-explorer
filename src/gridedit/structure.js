@@ -1,10 +1,10 @@
-// SQL Explorer — gridedit/structure: the read-only Structure view.
+// SQL Explorer, gridedit/structure: the read-only Structure view.
 // Bundled into extension.js by build.mjs.
 //
 // A workbench's structure view is not just the column list: which indexes
 // exist decides whether a query is fast, and which foreign keys exist decides
 // what a row is related to. Both, plus the CREATE statement, come straight
-// from the sidecar's catalog endpoints — no DDL is generated here.
+// from the sidecar's catalog endpoints; no DDL is generated here.
 
 import { ensurePkColumns } from "../columns.js";
 import { openCenteredDialog, renderSqlPreview } from "../dialogs.js";
@@ -175,7 +175,7 @@ const TABS = [
 
 /**
  * Read-only "Structure" view: columns, indexes, foreign keys and the CREATE
- * statement for the open table. Available on read-only connections too — none
+ * statement for the open table. Available on read-only connections too; none
  * of it writes.
  */
 export async function openStructureDialog(session) {

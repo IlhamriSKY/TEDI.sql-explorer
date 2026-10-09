@@ -1,4 +1,4 @@
-// SQL Explorer — generic fallback dialect. Bundled by build.mjs.
+// SQL Explorer: generic fallback dialect. Bundled by build.mjs.
 //
 // Returned by getDialect() for an unknown/unset engine kind so callers never
 // have to null-check. Mirrors the historical defaults: ANSI double-quote

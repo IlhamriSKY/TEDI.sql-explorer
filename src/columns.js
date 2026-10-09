@@ -1,4 +1,4 @@
-// SQL Explorer — columns module. Bundled into extension.js by build.mjs.
+// SQL Explorer: columns module. Bundled into extension.js by build.mjs.
 import { fetchJson } from "./sidecar.js";
 
 
@@ -10,7 +10,7 @@ export function shortTypeLabel(meta) {
 
 /** Rich hover tooltip for a column header: type · key · nullability · default. */
 export function columnHeaderTooltip(col, meta) {
-  if (!meta) return `${col} — click to sort`;
+  if (!meta) return `${col}: click to sort`;
   const bits = [];
   const type = meta.full_type || meta.data_type;
   if (type) bits.push(String(type));
@@ -79,7 +79,7 @@ export function classifyColumnType(colInfo) {
 }
 
 /** True for a value the grid shows as a chip rather than text: a binary blob,
- *  or a type the helper could not render. Neither can be edited inline — there
+ *  or a type the helper could not render. Neither can be edited inline; there
  *  is no text form to hand the editor, and committing would write the marker
  *  object back as the cell's value. */
 export function isBytesCell(value) {

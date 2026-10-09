@@ -1,4 +1,4 @@
-// SQL Explorer — dom/feedback: toast + clipboard helpers. Bundled by build.mjs.
+// SQL Explorer, dom/feedback: toast + clipboard helpers. Bundled by build.mjs.
 import { ctx } from "../runtime.js";
 
 export function safeToast(message, variant) {

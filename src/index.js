@@ -20,6 +20,7 @@
 // callback and the host clears the slot.
 
 import {
+  connectWithRetry,
   loadSavedConnections,
   refreshSavedConnections,
   releaseTunnel,
@@ -47,6 +48,7 @@ import {
   clearPublishedEndpoint,
   ensureSidecar,
   fetchJson,
+  setReconnectHandler,
   setSidecar,
   sidecar,
 } from "./sidecar.js";
@@ -76,6 +78,7 @@ export async function activate(context) {
     return;
   }
   injectStyles();
+  setReconnectHandler((connId) => connectWithRetry(connId));
   // AI tools: list connections, browse the schema, run a query. Registered from
   // activate() (never the manifest) like every other extension AI tool.
   registerAiTools();
@@ -182,7 +185,7 @@ export async function deactivate() {
     try {
       ctx?.sidebar?.removeSection?.(SIDEBAR_SECTION_ID);
     } catch {
-      // ignore — host clears the registry slice on deactivate anyway
+      // ignore: host clears the registry slice on deactivate anyway
     }
     if (state.editorHandle?.dispose) {
       try {

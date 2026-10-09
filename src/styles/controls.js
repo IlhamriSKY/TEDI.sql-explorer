@@ -1,4 +1,4 @@
-// SQL Explorer — styles/controls: dialogs (form/confirm/structure), the
+// SQL Explorer, styles/controls: dialogs (form/confirm/structure), the
 // action-SQL strip, form inputs, the custom select + context menus, the tooltip
 // bubble, number steppers, and the responsive tweaks. Bundled into extension.js
 // by build.mjs. (Concatenated after grid by styles.js.)
@@ -9,7 +9,7 @@ export const CONTROLS_CSS = `
 .tsql-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.30); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 2000; backdrop-filter: blur(2px); }
 .tsql-dialog { position: relative; background: var(--popover, var(--card, var(--background))); color: var(--popover-foreground, var(--foreground)); border: 1px solid var(--border); border-radius: var(--radius, 0); padding: 18px 20px; min-width: 340px; max-width: 92%; max-height: 92%; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.4); }
 .tsql-dialog-title { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
-/* Centered form dialog (New/Edit connection) — header row + tidy 2-col grid.
+/* Centered form dialog (New/Edit connection): header row + tidy 2-col grid.
    A taller, roomier modal: flex column with a min-height; the body grows and
    pins the actions to the bottom. */
 .tsql-dialog-form { width: 520px; max-width: 92%; min-height: 460px; padding: 16px 18px 18px; display: flex; flex-direction: column; }

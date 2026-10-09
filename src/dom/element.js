@@ -1,4 +1,4 @@
-// SQL Explorer — dom/element: hyperscript element builder. Bundled by build.mjs.
+// SQL Explorer, dom/element: hyperscript element builder. Bundled by build.mjs.
 
 export function el(tag, opts = {}, ...children) {
   const node = document.createElement(tag);

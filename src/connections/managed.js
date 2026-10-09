@@ -1,4 +1,4 @@
-// SQL Explorer — connections/managed: the databases the Dev Environment
+// SQL Explorer, connections/managed: the databases the Dev Environment
 // extension runs, offered here without anyone typing a host and port.
 //
 // The handoff is a FILE, not a call, because the host gives two extensions no

@@ -2,6 +2,33 @@
 
 All notable changes to the TEDI SQL Explorer extension are documented here.
 
+## [0.6.10] - 09-10-2026
+
+### Added
+
+- **Transactions span runs.** The editor keeps one server session per connection, so `BEGIN` in one run and `COMMIT` in the next behave as in any SQL client, and `SET` sticks. While a transaction is open the toolbar says so and offers Commit / Rollback. A session idle for 10 minutes is closed; an open transaction on it is rolled back and the next run tells you.
+- **Copy connection info**, from the right-click menu of a connection or of one database: host, port, user, password, database, a ready URL and a `mysql` / `psql` command, plus the `ssh -L` step for a tunnelled database. Paste it to an AI agent or another client and it can connect. A second entry copies the same without the password.
+- **Sort query results** by clicking a column header (over the rows already fetched). Query results now page at the same rows-per-page as the table browser instead of a fixed 10.
+- **PostgreSQL errors point at the problem**: `(line 2, column 5)`, plus the server's DETAIL and HINT.
+- **Huge tables open without a full-scan COUNT.** Past ~1M rows an unfiltered table shows the catalog estimate (`~1,234,567 rows`); a filtered count stays exact.
+- The extension reconnects on its own when the helper was restarted, and the helper retries a read whose connection the server had dropped.
+
+### Fixed
+
+- **`START TRANSACTION` failed on MySQL** (error 1295, not allowed as a prepared statement). Statements that return no rows now go through the text protocol.
+- **A batch that left a transaction open handed it to the connection pool**, so the next table browse read inside that uncommitted transaction (and, on PostgreSQL after an error, failed every statement). Such a connection is now closed, and the run reports that its transaction was rolled back.
+- **PostgreSQL `$$` function bodies were split at their inner semicolons**, and MySQL `#` comments were not recognised. Splitting now follows each engine's quoting.
+- **The read-only gate could be fooled on PostgreSQL** by a backslash before a closing quote (`'x\'`), which hid a following `DELETE` inside what it took for a string. The gate now lexes with the connection's own rules.
+- **Exporting a query result ignored the database / schema it ran in**, so unqualified names resolved against whatever a pooled connection last used.
+- A `DROP DATABASE` of the current database left the editor without one.
+
+### Changed
+
+- **Grid results no longer carry blob bytes.** A `SELECT *` over 60 rows of 1 MB `bytea` went from a 76 MB response to about 1 KB; exports still include the bytes. A result also stops at 32 MB as well as at the row limit, marked truncated with the reason.
+- An editor run costs fewer round trips: the session, its server id and its context are set up once, not on every run (measured 126 ms to 32 ms per run with 5 ms of network latency each way).
+- Tooltips and messages no longer use em-dashes.
+- Exports format rows as they stream in and come back as the file itself, not as a string inside JSON. JSON exports put one object per line.
+
 ## [0.6.9] - 08-09-2026
 
 ### Changed

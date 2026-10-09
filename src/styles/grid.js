@@ -1,4 +1,4 @@
-// SQL Explorer — styles/grid: the result + table grids — sticky headers, sort
+// SQL Explorer, styles/grid: the result + table grids, sticky headers, sort
 // affordances, typed cell editors, the saved-flash, and the pager. Bundled into
 // extension.js by build.mjs. (Concatenated after layout by styles.js.)
 
@@ -24,7 +24,7 @@ export const GRID_CSS = `
 .tsql-th-top { display: flex; align-items: center; gap: 5px; }
 .tsql-th-name { overflow: hidden; text-overflow: ellipsis; }
 /* PK badge: matches the host's Badge "secondary" variant (the same neutral,
-   non-bold chrome as the read-only pill .tsql-ro-pill) — keeps the grid's
+   non-bold chrome as the read-only pill .tsql-ro-pill), keeps the grid's
    monochromatic palette instead of a bold brand-blue outline. */
 .tsql-th-pk { flex-shrink: 0; font-size: 9px; font-weight: 500; letter-spacing: 0.02em; line-height: 1; padding: 2px 5px; border-radius: var(--radius, 0); color: var(--secondary-foreground, var(--foreground)); background: var(--secondary, var(--muted, rgba(127,127,127,0.18))); border: 1px solid transparent; }
 .tsql-th-type { display: block; margin-top: 2px; font-size: 9.5px; font-weight: 400; color: var(--muted-foreground); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; }
@@ -42,7 +42,7 @@ export const GRID_CSS = `
 .tsql-grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
 .tsql-grid tbody tr:hover td { background: color-mix(in srgb, var(--foreground) 9%, transparent); }
 .tsql-cell-null { color: var(--muted-foreground); font-style: italic; opacity: 0.7; }
-/* Monochromatic table palette — no brand-blue accents inside the grid.
+/* Monochromatic table palette, no brand-blue accents inside the grid.
    Bool values use plain foreground weight; the cell-edit input uses the
    strongest neutral border so it still pops without introducing color. */
 .tsql-cell-bool { color: var(--foreground); font-weight: 600; }

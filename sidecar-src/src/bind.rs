@@ -3,7 +3,7 @@
 //! One `bind_<backend>` per engine, plus the extra PostgreSQL needs: it is the
 //! only one of the three that type-checks parameters, so composites and NULLs
 //! there have to be told what type they are. Values are always BOUND, never
-//! inlined — the SQL a mutation runs carries identifiers and placeholders only.
+//! inlined: the SQL a mutation runs carries identifiers and placeholders only.
 
 use base64::Engine as _;
 use serde_json::{Map, Value};
@@ -45,7 +45,7 @@ macro_rules! impl_bind {
                 Value::String(s) => {
                     q = q.bind(s.as_str());
                 }
-                // Object / Array — the `bytes` marker plus whatever the engine
+                // Object / Array: the `bytes` marker plus whatever the engine
                 // can make of a composite value.
                 other => q = $non_scalar(q, other),
             }
@@ -84,7 +84,7 @@ impl_bind!(bind_sqlite, sqlx::Sqlite, bind_sqlite_other);
 // PostgreSQL will not take a composite as a text parameter: an ARRAY column
 // answers "column is of type text[] but expression is of type text", and so
 // does `jsonb`. That made every array and JSON column impossible to insert or
-// edit — which only became reachable at all once arrays started decoding as
+// edit, which only became reachable at all once arrays started decoding as
 // arrays instead of NULL.
 //
 // Guessing the element type from the JSON shape does not scale: it cannot tell
@@ -93,14 +93,14 @@ impl_bind!(bind_sqlite, sqlx::Sqlite, bind_sqlite_other);
 // the column's declared type up once and cast the placeholder to it
 // (`$1::text[]`), binding the value's Postgres text form; the cast runs that
 // type's own input function, which is exactly how a `'{1,2}'::numeric[]`
-// literal works. Values stay bound parameters — no user data is ever inlined
+// literal works. Values stay bound parameters; no user data is ever inlined
 // into the statement.
 
 /// True for a value PostgreSQL will refuse as a plain text parameter.
 ///
 /// `Null` is in here for the same reason the composites are, and it is the
 /// wider bug: sqlx types a bound `None` as TEXT, so clearing ANY non-text cell
-/// ("column is of type integer but expression is of type text") failed —
+/// ("column is of type integer but expression is of type text") failed;
 /// integers, dates, timestamps, booleans, uuids, jsonb and arrays alike.
 /// Casting the placeholder to the column's type makes `NULL::text::<type>`
 /// resolve to a plain NULL of the right type.

@@ -1,4 +1,4 @@
-// SQL Explorer — dom/inputs: form controls (text/number/checkbox/search) +
+// SQL Explorer, dom/inputs: form controls (text/number/checkbox/search) +
 // cryptoId. Bundled by build.mjs.
 import { el } from "./element.js";
 import { appendIcon } from "./icon.js";

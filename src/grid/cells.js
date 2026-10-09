@@ -1,4 +1,4 @@
-// SQL Explorer — grid/cells: cell rendering, tooltip + the right-click copy
+// SQL Explorer, grid/cells: cell rendering, tooltip + the right-click copy
 // menu, shared by both the query-result grid and the table-browse grid.
 // Bundled into extension.js by build.mjs.
 import { appendIcon, cellText, copyToClipboard, el, setTooltipAttr } from "../dom.js";
@@ -43,7 +43,7 @@ export function cellTooltip(value) {
     return `Binary value: ${value.size} bytes (double-click to inspect base64)`;
   }
   if (value && typeof value === "object" && value.__type === "unsupported") {
-    return `A ${value.pg_type} value is stored here. The helper can't render this type yet — cast it in a query (e.g. SELECT col::text) to read it.`;
+    return `A ${value.pg_type} value is stored here. The helper can't render this type yet; cast it in a query (e.g. SELECT col::text) to read it.`;
   }
   if (value && typeof value === "object") return JSON.stringify(value);
   return value == null ? "NULL" : String(value);

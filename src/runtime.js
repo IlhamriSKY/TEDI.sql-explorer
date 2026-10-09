@@ -1,4 +1,4 @@
-// SQL Explorer — runtime module. Bundled into extension.js by build.mjs.
+// SQL Explorer: runtime module. Bundled into extension.js by build.mjs.
 // Shared mutable singletons + app constants. Other modules import the live
 // bindings for reads and call the setters here for writes (esbuild preserves
 // ESM live-binding semantics across the bundle).

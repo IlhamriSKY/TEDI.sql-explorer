@@ -1,4 +1,4 @@
-// SQL Explorer — query/results: render a /query response (one or many
+// SQL Explorer, query/results: render a /query response (one or many
 // statements) into the results pane. Bundled into extension.js by build.mjs.
 import { disposePreviewEditors, renderSqlPreview } from "../dialogs.js";
 import { clearChildren, el } from "../dom.js";
@@ -60,6 +60,7 @@ function renderStatementDetail(container, stmt, language, session) {
       rows: stmt.rows,
       elapsedMs: stmt.elapsed_ms,
       truncated: stmt.truncated,
+      truncatedBySize: Boolean(stmt.truncated_by_size),
       language,
       session,
     });

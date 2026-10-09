@@ -164,7 +164,7 @@ pub async fn list_tables(
         Backend::Postgres(pool) => {
             // `relkind` is PostgreSQL's internal `"char"` type, NOT text:
             // decoding it as a String fails, and the `unwrap_or_default()`
-            // below then made every relation look like a plain table — so a
+            // below then made every relation look like a plain table, so a
             // view was never reported as one. Cast it server-side.
             let rows = sqlx::query(
                 "SELECT c.relname AS name, c.relkind::text AS kind, c.reltuples::bigint AS rows \
@@ -357,7 +357,7 @@ pub async fn list_columns(
 /// parser handles as identifier terminators outside of quotes. NUL is
 /// rejected because some drivers truncate at the first NUL byte, which
 /// would let an attacker smuggle SQL past the closing quote. Line
-/// breaks (`\n`, `\r`) are rejected for the same reason — they're legal
+/// breaks (`\n`, `\r`) are rejected for the same reason: they're legal
 /// inside MySQL backticks / PG quotes but no real schema uses them, and
 /// rejecting keeps the boundary conservative without breaking the
 /// hyphen / digit-leading / non-ASCII names we want to support.

@@ -1,4 +1,4 @@
-// SQL Explorer — sql module. Bundled into extension.js by build.mjs.
+// SQL Explorer: sql module. Bundled into extension.js by build.mjs.
 import { getDialect, quoteIdent } from "./dialects/index.js";
 import { pageSizeFor, state } from "./runtime.js";
 
@@ -95,7 +95,7 @@ export function buildInsertSql(connId, t, values) {
 const DESTRUCTIVE_REGEX = /\b(DROP\s+(DATABASE|SCHEMA|TABLE)|TRUNCATE\s+TABLE?|DROP\s+ROLE|GRANT\s+ALL)\b/i;
 
 /** Blank out comments and string literals so a keyword scan only sees real
- *  SQL — `WHERE` inside a quoted value must not look like a WHERE clause, and
+ *  SQL: `WHERE` inside a quoted value must not look like a WHERE clause, and
  *  `-- DROP TABLE` in a comment must not look like a DROP. */
 function bareSql(sql) {
   return String(sql ?? "")
@@ -112,7 +112,7 @@ function bareSql(sql) {
  * people out, and the reason phpMyAdmin asks: an `UPDATE` or `DELETE` with no
  * `WHERE` reads like an edit and silently rewrites every row in the table.
  *
- * Ordinary reads and targeted writes run straight away — a confirmation on
+ * Ordinary reads and targeted writes run straight away; a confirmation on
  * every Run would be noise, and noise is what gets clicked through.
  */
 export function destructiveReason(sql) {

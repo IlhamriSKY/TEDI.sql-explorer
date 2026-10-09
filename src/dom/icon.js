@@ -1,4 +1,4 @@
-// SQL Explorer — dom/icon: HugeIcon mount helper. Bundled by build.mjs.
+// SQL Explorer, dom/icon: HugeIcon mount helper. Bundled by build.mjs.
 import { ctx } from "../runtime.js";
 
 /**

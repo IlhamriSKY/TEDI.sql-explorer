@@ -129,6 +129,8 @@ const TOOLS = [
           conn: conn.id,
           sql,
           request_id: `ai-${Date.now().toString(36)}`,
+          // Only MAX_ROWS reach the model; one more tells it the result went on.
+          row_limit: MAX_ROWS + 1,
           database: args.database ?? state.sessions[conn.id]?.currentDatabase ?? undefined,
           schema: args.schema ?? state.sessions[conn.id]?.currentSchema ?? undefined,
         },

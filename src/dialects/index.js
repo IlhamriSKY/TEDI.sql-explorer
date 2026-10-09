@@ -1,4 +1,4 @@
-// SQL Explorer — dialect registry + pure helpers. Bundled by build.mjs.
+// SQL Explorer: dialect registry + pure helpers. Bundled by build.mjs.
 //
 // Single source of truth for every per-engine difference (quoting, connection
 // url, TLS, autocomplete vocabulary, labels). UI/SQL modules import from here
@@ -24,14 +24,14 @@ export function getDialect(kind) {
   return BY_ID[kind] || generic;
 }
 
-/** All registered descriptors — drives the engine <select> and any per-engine
+/** All registered descriptors, drives the engine <select> and any per-engine
  *  UI. Returns the live ordered array (do not mutate). */
 export function listDialects() {
   return DIALECTS;
 }
 
 /** Quote an identifier for `dialect`, doubling any embedded quote char per the
- *  SQL spec (display-only — the sidecar runs parameterized statements). */
+ *  SQL spec (display-only, the sidecar runs parameterized statements). */
 export function quoteIdent(dialect, name) {
   const q = dialect.quoteChar;
   const s = String(name ?? "");

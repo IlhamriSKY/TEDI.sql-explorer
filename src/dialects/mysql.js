@@ -1,7 +1,7 @@
-// SQL Explorer — MySQL / MariaDB dialect descriptor. Bundled by build.mjs.
+// SQL Explorer: MySQL / MariaDB dialect descriptor. Bundled by build.mjs.
 //
 // A dialect is plain data: the registry (./index.js) and pure helpers read
-// these fields, so adding a new engine never means touching call sites — drop
+// these fields, so adding a new engine never means touching call sites: drop
 // a sibling file like this one and register it in ./index.js.
 
 /** @type {import("./types.js").Dialect} */

@@ -1,4 +1,4 @@
-// SQL Explorer — connections/store: persistence (settings), passwords (OS
+// SQL Explorer, connections/store: persistence (settings), passwords (OS
 // keychain), form validation/normalisation, and per-connection session
 // bootstrap. Bundled into extension.js by build.mjs.
 import { getDialect } from "../dialects/index.js";
@@ -122,7 +122,7 @@ export async function getSecret(connId) {
  * Best-effort wipe of a connection's stored password from the OS keychain.
  * Uses `ctx.secrets.delete` when the host exposes it (newer builds); on older
  * hosts it falls back to overwriting the entry with an empty string so the
- * credential no longer lingers in the keychain. Never throws — deletion is a
+ * credential no longer lingers in the keychain. Never throws: deletion is a
  * cleanup step, not a gate.
  */
 export async function deleteSecret(connId) {
@@ -184,7 +184,7 @@ export function validateForm(form) {
 export function formToPersistable(form) {
   const { password: _p, ...rest } = form;
   if (rest.kind === "sqlite") {
-    // SQLite has no host/port/user/database — the file lives in `sqlitePath`.
+    // SQLite has no host/port/user/database; the file lives in `sqlitePath`.
     // Clear the irrelevant fields so the record can't carry the host default
     // (e.g. "127.0.0.1") that reconnect/edit/subtitle would otherwise mistake
     // for the file path.

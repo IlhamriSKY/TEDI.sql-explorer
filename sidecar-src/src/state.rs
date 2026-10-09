@@ -7,13 +7,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::db::{Backend, BackendKind, build_pool, url_with_database};
 use crate::error::AppResult;
+use crate::session::Session;
 
 #[derive(Clone, Debug)]
 pub struct ConnectionConfig {
@@ -25,9 +27,7 @@ pub struct ConnectionConfig {
 pub struct Connection {
     pub backend: Backend,
     pub config: ConnectionConfig,
-    /// Driver name as reported back to the frontend (`mysql` / `postgres` /
-    /// `sqlite`). Avoids re-deriving it from `backend` in every response.
-    pub kind: &'static str,
+    pub kind: BackendKind,
     /// Default database / schema the connection was opened against. Used by
     /// schema endpoints when the request omits the database parameter.
     pub default_database: Option<String>,
@@ -41,9 +41,57 @@ pub struct Connection {
     pub max_pool: u32,
     /// Lazily-opened per-database pools (PostgreSQL only), keyed by db name.
     pub extra_pools: RwLock<HashMap<String, Backend>>,
+    /// The query editor's long-lived session (see `session.rs`). Locked for
+    /// the length of a run, so a second concurrent run is refused, not queued.
+    pub editor: Mutex<Option<Session>>,
+    /// Bumped per editor run; the idle-close timer only fires for the latest.
+    pub editor_epoch: AtomicU64,
+    /// A message for the next editor run (e.g. an idle transaction rolled back).
+    notice: std::sync::Mutex<Option<String>>,
 }
 
 impl Connection {
+    pub fn new(
+        backend: Backend,
+        config: ConnectionConfig,
+        default_database: Option<String>,
+        current_database: Option<String>,
+        url: String,
+        max_pool: u32,
+    ) -> Self {
+        Self {
+            kind: backend.kind(),
+            backend,
+            config,
+            default_database,
+            current_database,
+            url,
+            max_pool,
+            extra_pools: Default::default(),
+            editor: Mutex::new(None),
+            editor_epoch: AtomicU64::new(0),
+            notice: Default::default(),
+        }
+    }
+
+    pub fn set_notice(&self, msg: String) {
+        *self.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+    }
+
+    pub fn take_notice(&self) -> Option<String> {
+        self.notice.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// Close the editor session and every pool this connection owns.
+    pub async fn close(&self) {
+        if let Some(session) = self.editor.lock().await.take() {
+            session.close().await;
+        }
+        for backend in self.all_backends().await {
+            crate::db::close_backend(backend).await;
+        }
+    }
+
     /// The pool that can actually answer for `database`.
     ///
     /// MySQL and SQLite see every database from one connection, so they always
@@ -56,7 +104,7 @@ impl Connection {
             Some(d) if !d.is_empty() => d,
             _ => return Ok(self.backend.clone()),
         };
-        if self.kind != "postgres" {
+        if self.kind != BackendKind::Postgres {
             return Ok(self.backend.clone());
         }
         if self.current_database.as_deref() == Some(db) {
@@ -96,7 +144,7 @@ impl Connection {
 /// In-flight request tracking. The frontend can call `/cancel` with the
 /// `request_id` returned by `/query` to abort a long-running statement.
 ///
-/// Cancelling the Rust future only abandons the socket — the server keeps
+/// Cancelling the Rust future only abandons the socket; the server keeps
 /// executing. `backend_pid` is the server-side connection id (MySQL
 /// `CONNECTION_ID()`, PostgreSQL `pg_backend_pid()`) of the connection the
 /// batch is pinned to, so `/cancel` can also tell the database to stop.

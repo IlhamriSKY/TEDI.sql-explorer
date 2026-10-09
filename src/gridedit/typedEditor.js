@@ -1,4 +1,4 @@
-// SQL Explorer — gridedit/typedEditor: the shared typed inline-edit widget.
+// SQL Explorer, gridedit/typedEditor: the shared typed inline-edit widget.
 // Bundled into extension.js by build.mjs.
 import { inputValueToIso, isoToInputValue } from "../columns.js";
 import { clearChildren, createDatePicker, el, makeNumberWrap, select, trackFloatingMenu } from "../dom.js";
@@ -98,7 +98,7 @@ export function mountTypedEditor(td, { type, nullable, original, colInfo, commit
     });
     return;
   } else if (type === "date" || type === "time" || type === "datetime") {
-    // Custom themed picker — replaces the native control whose popup can't be
+    // Custom themed picker, replaces the native control whose popup can't be
     // restyled. It owns its own commit/cancel lifecycle (Apply / day-click /
     // Enter / click-away → commit, Escape → cancel), so it bypasses the shared
     // blur/keydown wiring below.
@@ -133,7 +133,7 @@ export function mountTypedEditor(td, { type, nullable, original, colInfo, commit
         cancel();
       },
     });
-    // Tab / programmatic focus leaving the widget commits too — the date branch
+    // Tab / programmatic focus leaving the widget commits too; the date branch
     // returns before the shared blur wiring, so without this a keyboard-only
     // exit would never commit and would leave the click-away listener armed.
     // Deferred so focus moving INTO the body-mounted popup (a day button or an

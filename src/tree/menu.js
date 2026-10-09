@@ -1,4 +1,4 @@
-// SQL Explorer — tree/menu: the right-click menu on a schema-tree node.
+// SQL Explorer: tree/menu, the right-click menu on a schema-tree node.
 // Bundled into extension.js by build.mjs.
 //
 // The sidebar row itself only has room for a couple of hover buttons, but a
@@ -8,7 +8,12 @@
 // >= 0.4.9 for `SidebarSection.onItemContextMenu`; on older hosts the menu
 // simply never opens and every action stays reachable elsewhere.
 
-import { confirmAndDeleteConnection, ensureSession, openConnectionDialog } from "../connections.js";
+import {
+  confirmAndDeleteConnection,
+  copyConnectionMenuItems,
+  ensureSession,
+  openConnectionDialog,
+} from "../connections.js";
 import { openConfirmDialog } from "../dialogs.js";
 import { copyToClipboard, openContextMenu, safeToast } from "../dom.js";
 import { openStructureDialog } from "../gridedit.js";
@@ -44,7 +49,7 @@ export function refreshNode(id, view) {
 /**
  * Refresh whichever node holds this table's siblings. MySQL/SQLite hang tables
  * straight off the database node (the schema level is collapsed away), while
- * PostgreSQL hangs them off the schema node — so try the schema node and fall
+ * PostgreSQL hangs them off the schema node, so try the schema node and fall
  * back to the database one.
  */
 function refreshTableParent(m, view) {
@@ -69,7 +74,7 @@ function loadIntoEditor(connId, sql, view) {
 
 /**
  * Run one statement against the NODE the user right-clicked. Truncate / Drop
- * have no dedicated endpoint — they are ordinary DDL through `/query`, so the
+ * have no dedicated endpoint; they are ordinary DDL through `/query`, so the
  * connection's allow_writes gates them exactly like typed SQL.
  *
  * The context comes from the node (`m.db` / `m.schema`), never from the
@@ -184,11 +189,12 @@ function menuItemsFor(m, id, view) {
       {
         // Same glyphs the connection ROW's hover actions use (tree/items.js),
         // so "rename this thing" is one pencil and "delete it" is one red trash
-        // everywhere in TEDI - menu and row alike.
+        // everywhere in TEDI, menu and row alike.
         label: "Edit connection",
         icon: "lucide:Pencil",
         onClick: () => void openConnectionDialog(conn),
       },
+      ...copyConnectionMenuItems(conn),
       { separator: true },
       {
         label: "Delete connection",
@@ -202,6 +208,7 @@ function menuItemsFor(m, id, view) {
     // A `db` node has no schema of its own: MySQL treats the database AS the
     // schema, while on PostgreSQL it is the schema node that sets search_path.
     const scope = m.kind === "schema" ? m.schema : m.db;
+    const conn = state.connections.find((c) => c.id === m.connId);
     return [
       { label: "Refresh", icon: "Refresh01Icon", onClick: () => refreshNode(id, view) },
       {
@@ -214,6 +221,8 @@ function menuItemsFor(m, id, view) {
           safeToast(`Unqualified names now resolve in ${scope}`, "info");
         },
       },
+      // Details for THIS database, not the connection's default one.
+      ...(conn ? copyConnectionMenuItems(conn, { database: m.db, schema: m.kind === "schema" ? m.schema : undefined }) : []),
     ];
   }
   if (m.kind === "table") return tableItems(m, view);

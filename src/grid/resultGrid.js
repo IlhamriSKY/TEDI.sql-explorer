@@ -1,4 +1,4 @@
-// SQL Explorer — grid/resultGrid: read-only grid for free-form SELECT results
+// SQL Explorer, grid/resultGrid: read-only grid for free-form SELECT results
 // with HeidiSQL-style chrome: row-count + duration meta on the left, client-side
 // search input + page navigation on the right, divider, then a sticky-header
 // table. Rows are paginated in JS (sidecar already capped to row_limit) so the
@@ -9,15 +9,19 @@ import { renderSqlPreview } from "../dialogs.js";
 import { appendIcon, el, makeSearchInput, openContextMenu, textBtn } from "../dom.js";
 import { beginQueryCellEdit } from "../gridedit.js";
 import { resolveQueryEditContext } from "../query.js";
-import { GRID_PAGE_SIZE, ctx } from "../runtime.js";
+import { ctx, pageSizeFor } from "../runtime.js";
 import { gridCopyMenuItems, renderCellTd } from "./cells.js";
 
 export function renderResultGrid(container, opts) {
-  const { sql, columns, rows, elapsedMs, truncated, language, session } = opts;
+  const { sql, columns, rows, elapsedMs, truncated, truncatedBySize, language, session } = opts;
+  const pageSize = pageSizeFor(session);
   const grid = {
     query: "",
     page: 0,
     filtered: rows,
+    /** Client-side sort over the fetched rows: column index + direction. */
+    sortCol: -1,
+    sortDir: "asc",
   };
   let searchTimer = null;
   // Resolved asynchronously below: non-null once this result is recognised
@@ -74,15 +78,37 @@ export function renderResultGrid(container, opts) {
       const needle = q.toLowerCase();
       grid.filtered = rows.filter((row) => rowMatches(row, needle));
     }
+    applySort();
     redraw();
+  }
+
+  function applySort() {
+    if (grid.sortCol < 0) return;
+    const ci = grid.sortCol;
+    const sign = grid.sortDir === "desc" ? -1 : 1;
+    // Copy first: `rows` is the result itself, kept in fetched order.
+    grid.filtered = [...grid.filtered].sort((a, b) => sign * compareCells(a[ci], b[ci]));
+  }
+
+  /** Header click cycles unsorted -> asc -> desc -> unsorted. */
+  function toggleSort(ci) {
+    if (grid.sortCol !== ci) {
+      grid.sortCol = ci;
+      grid.sortDir = "asc";
+    } else if (grid.sortDir === "asc") {
+      grid.sortDir = "desc";
+    } else {
+      grid.sortCol = -1;
+    }
+    applyFilter(grid.query);
   }
 
   function redraw() {
     const total = grid.filtered.length;
-    const totalPages = Math.max(1, Math.ceil(total / GRID_PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
     if (grid.page >= totalPages) grid.page = totalPages - 1;
-    const start = grid.page * GRID_PAGE_SIZE;
-    const slice = grid.filtered.slice(start, start + GRID_PAGE_SIZE);
+    const start = grid.page * pageSize;
+    const slice = grid.filtered.slice(start, start + pageSize);
 
     leftMeta.replaceChildren();
     const baseInfo = grid.query
@@ -90,7 +116,17 @@ export function renderResultGrid(container, opts) {
       : `${rows.length.toLocaleString()} rows`;
     leftMeta.appendChild(document.createTextNode(`${baseInfo} · ${elapsedMs} ms`));
     if (truncated && !grid.query) {
-      leftMeta.appendChild(el("span", { class: "tsql-tag tsql-tag--warn", text: "truncated" }));
+      leftMeta.appendChild(
+        el("span", {
+          class: "tsql-tag tsql-tag--warn",
+          text: "truncated",
+          attrs: {
+            title: truncatedBySize
+              ? "Stopped at the 32 MB result budget before the row limit. Narrow the columns or add a LIMIT to see the rest."
+              : "Stopped at the connection's row limit. Add a LIMIT / WHERE, or raise the limit in the connection settings.",
+          },
+        }),
+      );
     }
     if (editCtx) {
       const tag = el("span", {
@@ -102,7 +138,7 @@ export function renderResultGrid(container, opts) {
       leftMeta.appendChild(tag);
     }
 
-    gridSlot.replaceChildren(buildGridTable(columns, slice, editCtx));
+    gridSlot.replaceChildren(buildGridTable(columns, slice, editCtx, grid, toggleSort));
 
     const hasPrev = grid.page > 0;
     const hasNext = grid.page < totalPages - 1;
@@ -168,12 +204,36 @@ function rowMatches(row, needle) {
   return false;
 }
 
-function buildGridTable(columns, rows, editCtx) {
+/** Order for the client-side sort: NULLs last, numbers numerically, text
+ *  with numeric-aware collation, anything else by its JSON. */
+function compareCells(a, b) {
+  if (a == null || b == null) return a == null ? (b == null ? 0 : 1) : -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  const sa = typeof a === "object" ? JSON.stringify(a) : String(a);
+  const sb = typeof b === "object" ? JSON.stringify(b) : String(b);
+  return sa.localeCompare(sb, undefined, { numeric: true });
+}
+
+function buildGridTable(columns, rows, editCtx, grid, onSort) {
   const wrap = el("div", { class: `tsql-grid-wrap${editCtx ? " is-editable" : ""}` });
   const table = el("table", { class: "tsql-grid" });
   const thead = el("thead");
   const headRow = el("tr");
-  for (const col of columns) headRow.appendChild(el("th", { class: "tedi-glass-solid", text: col }));
+  columns.forEach((col, ci) => {
+    const sorted = grid.sortCol === ci;
+    const th = el("th", {
+      class: `tsql-grid-th tedi-glass-solid${sorted ? ` is-sort-${grid.sortDir}` : ""}`,
+      attrs: { title: "Sort these rows (the result already fetched, not the database)" },
+    });
+    const top = el("span", { class: "tsql-th-top" });
+    top.appendChild(el("span", { class: "tsql-th-name", text: col }));
+    top.appendChild(
+      el("span", { class: "tsql-sort-arrow", text: sorted ? (grid.sortDir === "asc" ? "▲" : "▼") : "" }),
+    );
+    th.appendChild(top);
+    th.addEventListener("click", () => onSort(ci));
+    headRow.appendChild(th);
+  });
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = el("tbody");
@@ -182,28 +242,47 @@ function buildGridTable(columns, rows, editCtx) {
   const copyTarget = editCtx
     ? { database: editCtx.database, schema: editCtx.schema, table: editCtx.table }
     : null;
-  for (const row of rows) {
+  rows.forEach((row) => {
     const tr = el("tr");
     row.forEach((cell, ci) => {
       const td = renderCellTd(cell);
-      // When the result maps to an editable table, columns that correspond
-      // to real table columns get the spreadsheet affordance + double-click
-      // edit. The backing `row` array is passed (not an index) so edits and
-      // PK lookups stay correct across the grid's client-side pagination.
-      if (editCtx && editCtx.editableColIdx.has(ci)) {
-        td.classList.add("tsql-cell-editable");
-        td.addEventListener("dblclick", () => beginQueryCellEdit(editCtx, row, ci, td));
-      }
-      td.addEventListener("contextmenu", (e) =>
-        openContextMenu(
-          e,
-          gridCopyMenuItems({ columns, row, value: cell, connId: editCtx?.connId, target: copyTarget }),
-        ),
-      );
+      // Columns that map to real table columns get the spreadsheet affordance.
+      if (editCtx && editCtx.editableColIdx.has(ci)) td.classList.add("tsql-cell-editable");
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
-  }
+  });
+  // One listener pair for the whole page instead of two per cell. The backing
+  // `row` array (not a position) goes to the editor, so edits and PK lookups
+  // stay correct under client-side paging and sorting.
+  const cellAt = (e) => {
+    const td = /** @type {HTMLElement} */ (e.target)?.closest?.("td");
+    const tr = td?.parentElement;
+    if (!td || !tr || tr.parentElement !== tbody) return null;
+    const row = rows[/** @type {HTMLTableRowElement} */ (tr).sectionRowIndex];
+    const ci = /** @type {HTMLTableCellElement} */ (td).cellIndex;
+    return row ? { td, row, ci } : null;
+  };
+  tbody.addEventListener("dblclick", (e) => {
+    const hit = cellAt(e);
+    if (hit && editCtx && editCtx.editableColIdx.has(hit.ci)) {
+      beginQueryCellEdit(editCtx, hit.row, hit.ci, hit.td);
+    }
+  });
+  tbody.addEventListener("contextmenu", (e) => {
+    const hit = cellAt(e);
+    if (!hit) return;
+    openContextMenu(
+      e,
+      gridCopyMenuItems({
+        columns,
+        row: hit.row,
+        value: hit.row[hit.ci],
+        connId: editCtx?.connId,
+        target: copyTarget,
+      }),
+    );
+  });
   table.appendChild(tbody);
   wrap.appendChild(table);
   return wrap;

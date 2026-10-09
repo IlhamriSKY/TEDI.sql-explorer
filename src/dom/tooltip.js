@@ -1,4 +1,4 @@
-// SQL Explorer — dom/tooltip: the single delegated tooltip layer + the
+// SQL Explorer, dom/tooltip: the single delegated tooltip layer + the
 // data-tooltip attribute helper. Bundled by build.mjs.
 //
 // Native `title` attributes render the OS bubble, which clashes with TEDI's

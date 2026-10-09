@@ -1,4 +1,4 @@
-// SQL Explorer — dom/menus: the custom <select> dropdown + right-click context
+// SQL Explorer, dom/menus: the custom <select> dropdown + right-click context
 // menu. Both mount on <body> and share the floating-menu registry so a detached
 // trigger (grid re-render / pane teardown) can still be force-closed. Bundled by
 // build.mjs.
@@ -29,8 +29,8 @@ export function closeAllSelectMenus() {
  * Place a body-mounted floating layer (a menu, a picker popup) inside the
  * viewport.
  *
- * `anchor` is either a DOMRect to hang below — flipping above when there is no
- * room underneath — or an `{x, y}` point to open at, for a right-click. Every
+ * `anchor` is either a DOMRect to hang below, flipping above when there is no
+ * room underneath, or an `{x, y}` point to open at, for a right-click. Every
  * floating layer here used to do this by hand and differently, and the select
  * menu did not clamp at all: near the bottom of a short pane it opened partly
  * off-screen.
@@ -73,7 +73,7 @@ export function trackFloatingMenu(closeFn) {
  * `<select>` helper so we can drop it in without changing callers.
  *
  * `opts.className` adds classes to the trigger; `opts.onDismiss` fires when the
- * menu closes WITHOUT a pick (outside-click / Escape / programmatic close) —
+ * menu closes WITHOUT a pick (outside-click / Escape / programmatic close), 
  * used by the inline cell editor to revert when the user dismisses the dropdown
  * without choosing. Both are optional, so existing 3-arg callers are unchanged.
  *
@@ -128,7 +128,7 @@ export function select(options, current, onChange, opts = {}) {
     }
   };
   // The pane (.tsql-host) is now scrollable, so a scroll would leave this
-  // body-mounted menu floating at stale coordinates — close it on any scroll
+  // body-mounted menu floating at stale coordinates; close it on any scroll
   // (capture, to catch the pane / grid scroll), matching openContextMenu.
   const onDocScroll = () => closeMenu();
 

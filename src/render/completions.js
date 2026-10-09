@@ -1,4 +1,4 @@
-// SQL Explorer — render/completions: the autocomplete source for the query
+// SQL Explorer, render/completions: the autocomplete source for the query
 // editor. Bundled into extension.js by build.mjs.
 import {
   COMMON_FUNCTIONS,

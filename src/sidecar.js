@@ -1,4 +1,4 @@
-// SQL Explorer — sidecar module. Bundled into extension.js by build.mjs.
+// SQL Explorer: sidecar module. Bundled into extension.js by build.mjs.
 import { ctx } from "./runtime.js";
 
 
@@ -185,22 +185,27 @@ async function respawnSidecar() {
   return ensureSidecar();
 }
 
-export async function fetchJson(path, opts = {}, allowRespawn = true) {
+/** Re-opens a connection the helper no longer knows (it was respawned and
+ *  lost its pools). Registered by index.js, which owns the connect flow. */
+let reconnect = null;
+export function setReconnectHandler(fn) {
+  reconnect = fn;
+}
+
+async function request(path, opts, allowRespawn = true, allowReconnect = true) {
   if (!sidecar?.baseUrl) await ensureSidecar();
-  const url = `${sidecar.baseUrl}${path}`;
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${sidecar.token}`,
-  };
   const init = {
     method: opts.method ?? "GET",
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sidecar.token}`,
+    },
   };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   if (opts.signal) init.signal = opts.signal;
   let res;
   try {
-    res = await fetch(url, init);
+    res = await fetch(`${sidecar.baseUrl}${path}`, init);
   } catch (err) {
     // A network-level rejection (not an HTTP error response) means the sidecar
     // process is gone / refusing connections. Re-boot it once and retry so a
@@ -208,27 +213,43 @@ export async function fetchJson(path, opts = {}, allowRespawn = true) {
     // respawn when the caller aborted the request.
     if (allowRespawn && !opts.signal?.aborted) {
       await respawnSidecar();
-      return fetchJson(path, opts, false);
+      return request(path, opts, false, allowReconnect);
     }
     throw err;
   }
-  let text = "";
-  try {
-    text = await res.text();
-  } catch {
-    /* empty */
-  }
+  if (res.ok) return res;
+  const text = await res.text().catch(() => "");
   let json = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    /* empty */
+    /* not JSON */
   }
-  if (!res.ok) {
-    const msg = json?.error?.message ?? text ?? `HTTP ${res.status}`;
-    throw new Error(msg);
+  const msg = json?.error?.message ?? (text || `HTTP ${res.status}`);
+  // A respawned helper starts with no connections, so every request for one
+  // that was open answers "connection X not found". Reconnect it once and
+  // retry instead of making the user click the connection again.
+  const connId = opts.body?.conn ?? new URLSearchParams(path.split("?")[1] ?? "").get("conn");
+  if (res.status === 404 && /^not found: connection /.test(msg) && connId && reconnect && allowReconnect) {
+    await reconnect(connId);
+    return request(path, opts, allowRespawn, false);
   }
-  return json;
+  throw new Error(msg);
+}
+
+export async function fetchJson(path, opts = {}) {
+  const res = await request(path, opts);
+  const text = await res.text().catch(() => "");
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The raw response, for endpoints whose body is not JSON (`/export`). */
+export function fetchRaw(path, opts = {}) {
+  return request(path, opts);
 }
 
 export function sleep(ms) {

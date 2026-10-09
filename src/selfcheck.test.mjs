@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setCtx, state } from "./runtime.js";
 import { readOfferedConnections, syncManagedConnections } from "./connections/managed.js";
+import { connectionInfoText } from "./connections/copyInfo.js";
 
 let passed = 0;
 /** @param {string} name @param {() => unknown | Promise<unknown>} fn */
@@ -162,6 +163,24 @@ await test("removing the databases removes the connections", async () => {
     ["mine"],
     "only what the user typed should be left",
   );
+});
+
+// "Copy connection info" is what an AI agent connects with, so every line it
+// needs has to be there, and a password left out must really be left out.
+await test("connection info carries what a client needs to connect", () => {
+  const conn = { id: "c1", name: "app", kind: "postgres", host: "db.local", port: "5433", user: "o'neil", allow_writes: true };
+  const text = connectionInfoText(conn, { password: "p@ss'w", database: "shop", schema: "sales" });
+  for (const line of ["Host: db.local", "Port: 5433", "User: o'neil", "Password: p@ss'w", "Database: shop", "Schema: sales"]) {
+    assert.ok(text.includes(line), `missing ${line}`);
+  }
+  assert.ok(text.includes("URL: postgres://o'neil:p%40ss'w@db.local:5433/shop"), text);
+  // The shell quoting survives a quote inside the password.
+  assert.ok(text.includes(String.raw`CLI: PGPASSWORD='p@ss'\''w' psql -h db.local -p 5433 -U 'o'\''neil' -d 'shop'`), text);
+  const hidden = connectionInfoText({ ...conn, kind: "mysql", port: "" }, { password: null, database: "shop" });
+  assert.ok(!hidden.includes("p@ss"), "an omitted password must not appear");
+  assert.ok(hidden.includes("Port: 3306") && hidden.includes(" -p -D 'shop'"), hidden);
+  const tunnelled = connectionInfoText({ ...conn, sshTunnel: "s1" }, { password: "", sshHost: { user: "ec2", host: "bastion", port: 22 } });
+  assert.ok(tunnelled.includes("ssh -N -L 15432:db.local:5433 ec2@bastion"), tunnelled);
 });
 
 rmSync(home, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-// SQL Explorer — gridedit/rowOps: row-level operations (delete, insert).
+// SQL Explorer, gridedit/rowOps: row-level operations (delete, insert).
 // Writes are gated by the sidecar's allow_writes classifier. The read-only
 // Structure view lives in ./structure.js. Bundled into extension.js by
 // build.mjs.
@@ -55,7 +55,7 @@ export async function deleteRowFromGrid(session, rowIdx) {
     setActionSql(session, deleteSql);
     // Zero rows matched means the WHERE missed, not that the delete worked.
     if (resp?.affected === 0) {
-      safeToast("No row matched — it may already be gone.", "warning");
+      safeToast("No row matched (it may already be gone).", "warning");
       return;
     }
     safeToast("Row deleted", "success");
@@ -68,7 +68,7 @@ export async function deleteRowFromGrid(session, rowIdx) {
  * Build the typed input for one Insert-dialog field, mirroring the inline
  * cell editor's widget family (classifyColumnType): boolean/enum dropdowns,
  * date/time pickers, number steppers, text otherwise. `resolve()` returns
- * `{ include, value }` — `include:false` means "leave the field out so the DB
+ * `{ include, value }`, `include:false` means "leave the field out so the DB
  * applies its default / auto-increment"; `value:null` is an explicit NULL.
  */
 function makeInsertField(col) {

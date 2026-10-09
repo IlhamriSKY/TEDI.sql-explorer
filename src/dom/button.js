@@ -1,4 +1,4 @@
-// SQL Explorer — dom/button: the icon+label button. Bundled by build.mjs.
+// SQL Explorer, dom/button: the icon+label button. Bundled by build.mjs.
 import { el } from "./element.js";
 import { appendIcon } from "./icon.js";
 

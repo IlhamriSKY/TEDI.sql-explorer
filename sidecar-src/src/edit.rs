@@ -15,7 +15,7 @@ use crate::bind::{bind_mysql, bind_pg, bind_pg_value, bind_sqlite, pg_cast_types
 use crate::db::Backend;
 use crate::error::{AppError, AppResult};
 use crate::schema::{escape_mysql_ident, escape_pg_ident, qualify_mysql, qualify_pg, qualify_sqlite};
-use crate::value::decode_pg_row;
+use crate::value::{Cells, decode_pg_row};
 
 #[derive(Deserialize)]
 pub struct RowMutationRequest {
@@ -194,7 +194,7 @@ pub async fn insert_row(backend: &Backend, req: &RowMutationRequest) -> AppResul
                 q = bind_pg_value(q, &casts, col, v);
             }
             let row = q.fetch_optional(pool).await?;
-            let returned = row.as_ref().map(decode_pg_row).unwrap_or_default();
+            let returned = row.as_ref().map(|r| decode_pg_row(r, Cells::Display)).unwrap_or_default();
             let names: Vec<String> = row
                 .as_ref()
                 .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())

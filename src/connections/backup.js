@@ -1,4 +1,4 @@
-// SQL Explorer — connections/backup: export / import every saved connection as
+// SQL Explorer, connections/backup: export / import every saved connection as
 // one passphrase-encrypted `.tedi-sql` file, so moving to another machine is
 // one import instead of retyping every host and password.
 //

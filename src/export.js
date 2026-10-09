@@ -1,8 +1,8 @@
-// SQL Explorer — export module. Bundled into extension.js by build.mjs.
+// SQL Explorer: export module. Bundled into extension.js by build.mjs.
 import { openCenteredDialog } from "./dialogs.js";
 import { el, safeToast, select } from "./dom.js";
 import { state } from "./runtime.js";
-import { fetchJson } from "./sidecar.js";
+import { fetchRaw } from "./sidecar.js";
 
 // ----------------------------- Export dialog ---------------------------------
 
@@ -69,13 +69,18 @@ export async function openExportDialog() {
                   throw new Error("No row-producing statement to export.");
                 }
                 body.sql = firstRowStmt.sql;
+                // The same context the query ran in, or unqualified names
+                // resolve against whatever a pooled connection last used.
+                body.database = session.currentDatabase ?? undefined;
+                body.schema = session.currentSchema ?? undefined;
               }
-              const resp = await fetchJson("/export", { method: "POST", body });
-              const blob = new Blob([resp.export.content], { type: resp.export.mime });
+              const resp = await fetchRaw("/export", { method: "POST", body });
+              const blob = await resp.blob();
+              const rows = Number(resp.headers.get("x-export-rows") ?? 0);
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `${session.activeTable?.table ?? "result"}.${resp.export.extension}`;
+              a.download = `${session.activeTable?.table ?? "result"}.${resp.headers.get("x-export-extension") ?? format}`;
               document.body.appendChild(a);
               a.click();
               setTimeout(() => {
@@ -88,7 +93,7 @@ export async function openExportDialog() {
               }, 1500);
               close();
               safeToast(
-                `Exported ${resp.export.rows ?? 0} rows as ${a.download}`,
+                `Exported ${rows.toLocaleString()} rows as ${a.download}`,
                 "success",
               );
             } catch (err) {

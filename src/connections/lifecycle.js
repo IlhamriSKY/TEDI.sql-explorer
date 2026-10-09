@@ -1,4 +1,4 @@
-// SQL Explorer — connections/lifecycle: open/test a pool, save, delete, and
+// SQL Explorer, connections/lifecycle: open/test a pool, save, delete, and
 // select (lazy connect-with-retry). Bundled into extension.js by build.mjs.
 import { buildConnectionUrl, getDialect } from "../dialects/index.js";
 import { releaseTunnel, resolveEndpoint } from "./tunnel.js";
@@ -40,6 +40,9 @@ export async function connectFromForm(form, { test = false } = {}) {
     sqlite_read_only: !!form.sqliteReadOnly,
   };
   await fetchJson("/connect", { method: "POST", body });
+  // A (re)connect replaces the helper's connection, editor session included,
+  // so whatever transaction the toolbar showed is gone.
+  if (!test && state.sessions[form.id]) state.sessions[form.id].inTransaction = false;
   if (test) {
     await fetchJson("/disconnect", { method: "POST", body: { id: body.id } }).catch(() => {});
   }

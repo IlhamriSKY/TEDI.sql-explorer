@@ -1,4 +1,4 @@
-// SQL Explorer — grid/tableData: open a table + load its server-paged snapshot
+// SQL Explorer, grid/tableData: open a table + load its server-paged snapshot
 // (sort + search run server-side via /table-rows) + the debounced search.
 // Bundled into extension.js by build.mjs.
 import { ensurePkColumns } from "../columns.js";
@@ -14,7 +14,7 @@ export async function openTable(session, target, scrollIntoView = false) {
   // Opening a table also sets the active database + schema context, so a
   // subsequent free-form `SELECT * FROM …` in the query editor resolves
   // against the same place the user just clicked into. PostgreSQL needs the
-  // SCHEMA specifically — `search_path` holds schemas, so the database name
+  // SCHEMA specifically: `search_path` holds schemas, so the database name
   // resolves nothing there.
   session.currentDatabase = target.database;
   session.currentSchema = target.schema;
@@ -32,7 +32,7 @@ export async function openTable(session, target, scrollIntoView = false) {
   // Clicking a table is a GUI action: show the SELECT it runs in the middle
   // strip (loadTableRows refreshes it once the page/sort/filter is known).
   session.actionSql = buildSelectSql(session, target);
-  // Rebuild only the main area — the sidebar tree keeps its expansion, so the
+  // Rebuild only the main area; the sidebar tree keeps its expansion, so the
   // row the user just clicked stays in place.
   rerenderMain();
   // Refresh the pane tab label to "SQL Explorer · db.table" (keeps the tone).
@@ -95,8 +95,13 @@ export async function loadTableRows(session, page) {
     if (session.tableSnapshot) {
       session.tableSnapshot.elapsed_ms = elapsedMs;
       // Carry the cached count forward on a page flip; remember a fresh one.
-      if (reuseTotal !== undefined) session.tableSnapshot.total = reuseTotal;
-      else session._total = session.tableSnapshot.total;
+      if (reuseTotal !== undefined) {
+        session.tableSnapshot.total = reuseTotal;
+        session.tableSnapshot.total_estimated = session._totalEstimated;
+      } else {
+        session._total = session.tableSnapshot.total;
+        session._totalEstimated = Boolean(session.tableSnapshot.total_estimated);
+      }
       session._totalKey = totalKey;
     }
     // Update the autocomplete cache with the columns we just learned.

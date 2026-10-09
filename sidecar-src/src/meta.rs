@@ -32,7 +32,7 @@ pub struct ForeignKeyInfo {
     pub on_delete: String,
 }
 
-/// Fold `(group_key, member)` rows — already ordered by group then position —
+/// Fold `(group_key, member)` rows (already ordered by group then position)
 /// into one entry per group. The catalog queries below all return one row per
 /// index/constraint *column*, so every backend needs this same collapse.
 fn group_rows<K: PartialEq, T>(rows: Vec<(K, String, T)>, mut build: impl FnMut(K, Vec<String>, T)) {

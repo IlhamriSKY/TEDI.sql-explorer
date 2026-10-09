@@ -1,4 +1,4 @@
-// SQL Explorer — tree/view: publish the sidebar section + handle clicks/toggles
+// SQL Explorer, tree/view: publish the sidebar section + handle clicks/toggles
 // + open the workbench on a connection or table. Bundled by build.mjs.
 import {
   confirmAndDeleteConnection,
@@ -143,7 +143,7 @@ async function onTreeToggle(id) {
 
 /**
  * Open (or focus) the SQL Explorer as a NATIVE pane leaf (same frame as the
- * editor/terminal/browser — drag/icon/title/close, splittable). Falls back to a
+ * editor/terminal/browser, drag/icon/title/close, splittable). Falls back to a
  * standalone tab on hosts that predate `ctx.tabs.openExtensionPane`.
  */
 export function openWorkbenchTab() {

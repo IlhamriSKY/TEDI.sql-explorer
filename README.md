@@ -70,19 +70,43 @@ On open:
    - **UI:** insert dialog, double-click cell to edit, row delete, plus the
      tree's right-click truncate / drop.
    - **Query editor:** free-form multi-statement, gated on the per-connection
-     `allow_writes` flag. A batch is pinned to ONE pooled connection, so an
-     explicit `BEGIN` / `COMMIT` behaves; the session's database (MySQL `USE`)
-     and schema (PostgreSQL `search_path`) are set per batch and reset rather
-     than inherited from whatever ran on that connection before.
+     `allow_writes` flag. The editor keeps ONE session (server connection) per
+     connection across runs, so `BEGIN` in one run and `COMMIT` in a later one
+     work as in any SQL client; the toolbar shows **Transaction open** with
+     Commit / Rollback while one is. A session idle for 10 minutes is closed
+     (an open transaction on it is rolled back and you are told), and a session
+     whose connection died is replaced, re-running the batch only when its
+     first statement is a read.
+   - Anything else (AI tools, exports) runs on a connection pinned for that one
+     batch. If it leaves a transaction or a `SET` behind, that connection is
+     closed rather than handed back to the pool, where the next table browse
+     would have read inside someone's uncommitted transaction.
    - **PostgreSQL binds one database per connection**, so browsing a database
      the connection is not attached to opens (and caches) a pool for it. The
      base pool's catalog would otherwise answer for the wrong database.
-   - Results **stream** up to the row cap instead of being fetched whole and
-     truncated, and **Stop** issues a real server-side cancel (`KILL QUERY` /
-     `pg_cancel_backend`), not just a dropped socket.
+   - Results **stream** up to the row cap AND a 32 MB budget, whichever comes
+     first, and **Stop** issues a real server-side cancel (`KILL QUERY` /
+     `pg_cancel_backend`), not just a dropped socket. Grid results carry a
+     blob's size, never its bytes; only exports do.
+   - Statements are split and gated with each engine's own quoting rules
+     (PostgreSQL `$$` bodies and backslash-free strings, MySQL `#` comments).
+   - A table over ~1M rows shows the catalog's estimate (`~N rows`) instead of
+     paying for a full-scan `COUNT(*)`; a filtered count is always exact.
+   - **Copy connection info** (right-click a connection or a database) puts the
+     host, port, user, password, database, a URL and a CLI command on the
+     clipboard, ready to hand to an AI agent or another client. "Without
+     password" leaves the secret out.
+   - PostgreSQL errors say where they happened (`line 2, column 5`) and carry
+     the server's DETAIL / HINT.
 4. Passwords live in the OS keychain; never persisted to JSON.
-5. Identifiers (db / schema / table / column) pass a strict
-   `^[A-Za-z_][A-Za-z0-9_]*$` allow-list before being inlined.
+5. Identifiers (db / schema / table / column) are quoted for the engine with
+   embedded quotes doubled; one containing NUL / CR / LF is rejected.
+
+**Deliberately not here** (yet): SQL import, process list / kill, multiple
+query tabs, ER diagrams, DDL editing, a staged "pending changes" grid edit
+model, a canvas-virtualised grid (pages keep the DOM small instead), and
+fetching a big cell on demand (blobs show their size; text arrives whole,
+bounded by the result budget).
 
 ## Permissions
 
@@ -250,17 +274,31 @@ One job per module, same rule as the frontend.
 | `main.rs` | Process bootstrap: token, listener, READY line, shutdown. |
 | `routes.rs` | The axum router + one thin handler per endpoint. |
 | `db.rs` | Driver enum, pool construction, connection-url rewriting. |
-| `state.rs` | Live connections, per-database pools (`backend_for`), in-flight requests. |
+| `state.rs` | Live connections, per-database pools (`backend_for`), the editor session slot, in-flight requests. |
+| `session.rs` | One pinned connection plus its session state: context (`USE` / `search_path`), transaction tracking, pool hygiene. |
 | `schema.rs` | Catalog introspection: databases / schemas / tables / columns + identifier quoting. |
 | `meta.rs` | Indexes, foreign keys, and `CREATE TABLE` DDL. |
-| `sqltext.rs` | Statement splitting / classification / the read-only gate. Pure text, and the module's tests are the point of it. |
-| `query.rs` | Running a statement batch on one pinned connection: streaming, timeouts, cancel. |
+| `sqltext.rs` | The dialect-aware lexer: splitting, classification, transaction effects, the read-only gate. Pure text, and the module's tests are the point of it. |
+| `query.rs` | Running a statement batch on a session: streaming with row + byte caps, timeouts, cancel, the editor session's lifecycle. |
 | `rows.rs` | `/table-rows`: the paged, sorted, filtered browse SELECT. |
 | `edit.rs` | Row INSERT / UPDATE / DELETE by primary key. |
 | `bind.rs` | JSON value → bound parameter, plus the casts PostgreSQL needs for composites and NULLs. |
 | `value.rs` | Decoding a result cell of any column type back to JSON. |
-| `export.rs` | CSV / JSON / INSERT-SQL rendering. |
+| `export.rs` | CSV / JSON / INSERT-SQL, formatted as rows stream in and returned as the raw body. |
 | `auth.rs` / `error.rs` | Bearer-token middleware; the shared error → HTTP mapping. |
+
+### Testing
+
+`npm test` runs the frontend self-checks; `cargo test` in `sidecar-src` the
+lexer, export, paging and error-position tests. Neither needs a database, so
+neither sees the bugs that return plausible wrong data. After touching the
+sidecar, also run the live probe against real servers (each engine optional):
+
+```bash
+cd sidecar-src && cargo build
+PG_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
+MYSQL_URL=mysql://user:pass@127.0.0.1:3306/mysql node live-probe.mjs
+```
 
 ### Build
 

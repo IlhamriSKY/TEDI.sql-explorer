@@ -1,4 +1,4 @@
-// SQL Explorer — tree/connState: per-connection lifecycle status + its mapping
+// SQL Explorer, tree/connState: per-connection lifecycle status + its mapping
 // to a sidebar row tone. Bundled into extension.js by build.mjs.
 import { setTabState } from "../render.js";
 import { connStatus, state } from "../runtime.js";

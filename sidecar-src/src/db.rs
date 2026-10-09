@@ -15,7 +15,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendKind {
     Mysql,
@@ -38,6 +38,16 @@ pub enum Backend {
     Mysql(MySqlPool),
     Postgres(PgPool),
     Sqlite(SqlitePool),
+}
+
+impl Backend {
+    pub fn kind(&self) -> BackendKind {
+        match self {
+            Backend::Mysql(_) => BackendKind::Mysql,
+            Backend::Postgres(_) => BackendKind::Postgres,
+            Backend::Sqlite(_) => BackendKind::Sqlite,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -153,7 +163,7 @@ pub async fn close_backend(backend: Backend) {
 
 /// The database the pool is actually attached to. MySQL sessions can hop
 /// databases with `USE`, so only PostgreSQL (one database per connection)
-/// really needs this — we still ask both so `/connections` can report it.
+/// really needs this; we still ask both so `/connections` can report it.
 pub async fn current_database(backend: &Backend) -> Option<String> {
     use sqlx::Row as _;
     match backend {
@@ -190,7 +200,7 @@ fn encode_segment(s: &str) -> String {
 /// Rewrite a connection url to point at `database`, preserving scheme,
 /// credentials, host, and query string. Used to open a second PostgreSQL
 /// pool when the user browses a database the base connection isn't attached
-/// to — PG binds one database per connection, so a catalog query on the base
+/// to: PG binds one database per connection, so a catalog query on the base
 /// pool would silently answer for the wrong database.
 pub fn url_with_database(url: &str, database: &str) -> String {
     let (head, query) = match url.find('?') {

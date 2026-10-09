@@ -1,6 +1,6 @@
 //! The HTTP surface: the axum router and one handler per endpoint.
 //!
-//! Handlers stay thin on purpose — each resolves the connection (and, for
+//! Handlers stay thin on purpose: each resolves the connection (and, for
 //! PostgreSQL, the pool that can actually answer for the requested database),
 //! then delegates to the module that owns the work. Split out of `main.rs` so
 //! that file is only process bootstrap.
@@ -12,7 +12,8 @@ use axum::{
     Json, Router,
     extract::{Query, State},
     middleware,
-    response::IntoResponse,
+    http::{HeaderName, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -20,13 +21,13 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth;
-use crate::db::{ConnectRequest, build_backend, close_backend, current_database};
+use crate::db::{BackendKind, ConnectRequest, build_backend, current_database};
 use crate::edit::{MutationResponse, RowMutationRequest, delete_row, insert_row, update_row};
 use crate::rows::{TableRowsRequest, list_rows};
 use crate::error::{AppError, AppResult};
 use crate::export::{ExportRequest, run_export};
 use crate::meta::{ForeignKeyInfo, IndexInfo, list_foreign_keys, list_indexes, table_ddl};
-use crate::query::{ExecuteOptions, QueryRequest, QueryResponse, cancel_on_server, execute};
+use crate::query::{QueryRequest, QueryResponse, StatementResult, cancel_on_server, run_query};
 use crate::schema::{
     ColumnInfo, DatabaseInfo, SchemaInfo, TableInfo, list_columns, list_databases, list_schemas,
     list_tables,
@@ -99,39 +100,30 @@ async fn handle_connect(
     State(state): State<AppState>,
     Json(req): Json<ConnectRequest>,
 ) -> AppResult<Json<Value>> {
-    let kind_str = req.kind.as_str();
     let backend = build_backend(&req).await?;
     // Ask the server which database we actually landed on. PostgreSQL binds
     // one database per connection, so `Connection::backend_for` needs to know
     // when a request is asking about a different one.
     let current = current_database(&backend).await;
-    let conn = Arc::new(Connection {
-        kind: kind_str,
+    let kind = backend.kind().as_str();
+    let conn = Arc::new(Connection::new(
         backend,
-        config: ConnectionConfig {
+        ConnectionConfig {
             allow_writes: req.allow_writes,
             row_limit: req.row_limit,
             query_timeout: Duration::from_millis(req.query_timeout_ms.max(100)),
         },
-        default_database: req.default_database.clone(),
-        current_database: current.clone(),
-        url: req.url.clone(),
-        max_pool: req.max_pool,
-        extra_pools: Default::default(),
-    });
-    let mut conns = state.connections.write().await;
-    if let Some(prev) = conns.insert(req.id.clone(), conn) {
-        // Replace + drop the previous pools. Detach the close to a task so the
-        // /connect response doesn't wait for their drain.
-        tokio::spawn(async move {
-            for backend in prev.all_backends().await {
-                close_backend(backend).await;
-            }
-        });
+        req.default_database.clone(),
+        current.clone(),
+        req.url.clone(),
+        req.max_pool,
+    ));
+    let prev = state.connections.write().await.insert(req.id.clone(), conn);
+    if let Some(prev) = prev {
+        // Detach the close so the /connect response doesn't wait for a drain.
+        tokio::spawn(async move { prev.close().await });
     }
-    Ok(Json(
-        json!({ "ok": true, "id": req.id, "kind": kind_str, "current_database": current }),
-    ))
+    Ok(Json(json!({ "ok": true, "id": req.id, "kind": kind, "current_database": current })))
 }
 
 #[derive(Deserialize)]
@@ -143,13 +135,8 @@ async fn handle_disconnect(
     State(state): State<AppState>,
     Json(req): Json<DisconnectRequest>,
 ) -> AppResult<Json<Value>> {
-    let mut conns = state.connections.write().await;
-    if let Some(c) = conns.remove(&req.id) {
-        tokio::spawn(async move {
-            for backend in c.all_backends().await {
-                close_backend(backend).await;
-            }
-        });
+    if let Some(c) = state.connections.write().await.remove(&req.id) {
+        tokio::spawn(async move { c.close().await });
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -169,7 +156,7 @@ async fn handle_list_connections(State(state): State<AppState>) -> AppResult<Jso
     for (id, c) in conns.iter() {
         list.push(ConnectionSummary {
             id: id.clone(),
-            kind: c.kind,
+            kind: c.kind.as_str(),
             allow_writes: c.config.allow_writes,
             default_database: c.default_database.clone(),
             current_database: c.current_database.clone(),
@@ -206,7 +193,7 @@ async fn browse_target(
         .or_else(|| conn.current_database.clone())
         .unwrap_or_default();
     let schema = q.schema.clone().unwrap_or_else(|| {
-        if conn.kind == "postgres" {
+        if conn.kind == BackendKind::Postgres {
             "public".to_string()
         } else {
             database.clone()
@@ -291,72 +278,23 @@ async fn handle_query(
     Json(req): Json<QueryRequest>,
 ) -> AppResult<Json<QueryResponse>> {
     let conn = require_connection(&state, &req.conn).await?;
-    let row_limit = req.row_limit.unwrap_or(conn.config.row_limit);
-    let timeout = req
-        .timeout_ms
-        .map(Duration::from_millis)
-        .unwrap_or(conn.config.query_timeout);
     let request_id = req
         .request_id
         .clone()
         .unwrap_or_else(|| hex::encode(rand::random::<[u8; 8]>()));
     let cancel = CancellationToken::new();
     let backend_pid = Arc::new(tokio::sync::RwLock::new(None));
-    {
-        let mut in_flight = state.in_flight.write().await;
-        in_flight.map.insert(
-            request_id.clone(),
-            InFlightEntry {
-                cancel: cancel.clone(),
-                conn_id: req.conn.clone(),
-                backend_pid: backend_pid.clone(),
-            },
-        );
-    }
-    // Fall back to the connection's saved default_database when the request
-    // omits its own context, so a user who pinned a DB on the connection but
-    // typed a free-form query still resolves unqualified names. Then to the
-    // database the pool is actually attached to, so MySQL always has a `USE`
-    // to run and can't inherit whichever database a previous batch selected on
-    // the pooled connection.
-    let database = req
-        .database
-        .as_deref()
-        .or(conn.default_database.as_deref())
-        .or(conn.current_database.as_deref());
-    // PostgreSQL: the query has to run on the pool attached to that database.
-    let backend = conn.backend_for(database).await?;
-    let result = execute(
-        &backend,
-        &conn.config,
-        &req.sql,
-        ExecuteOptions {
-            row_limit,
-            timeout,
-            cancel,
-            database,
-            schema: req.schema.as_deref(),
-            backend_pid: Some(&backend_pid),
-        },
-    )
-    .await;
-    {
-        let mut in_flight = state.in_flight.write().await;
-        in_flight.map.remove(&request_id);
-    }
-    let statements = result?;
+    state.in_flight.write().await.map.insert(
+        request_id.clone(),
+        InFlightEntry { cancel: cancel.clone(), conn_id: req.conn.clone(), backend_pid: backend_pid.clone() },
+    );
+    let result = run_query(&conn, &req, cancel, &backend_pid).await;
+    state.in_flight.write().await.map.remove(&request_id);
+    let (statements, in_transaction, notice) = result?;
     let aborted = statements.iter().any(|s| {
-        matches!(
-            s,
-            crate::query::StatementResult::Error { error, .. }
-                if error == "canceled" || error.starts_with("timed out")
-        )
+        matches!(s, StatementResult::Error { error, .. } if error == "canceled" || error.starts_with("timed out"))
     });
-    Ok(Json(QueryResponse {
-        statements,
-        request_id,
-        aborted,
-    }))
+    Ok(Json(QueryResponse { statements, request_id, aborted, in_transaction, notice }))
 }
 
 #[derive(Deserialize)]
@@ -453,11 +391,19 @@ async fn handle_table_delete(
 async fn handle_export(
     State(state): State<AppState>,
     Json(req): Json<ExportRequest>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<Response> {
     let conn = require_connection(&state, &req.conn).await?;
     let backend = conn.backend_for(req.database.as_deref()).await?;
-    let resp = run_export(&backend, &conn.config, &req).await?;
-    Ok(Json(json!({ "ok": true, "export": resp })))
+    let out = run_export(&backend, &conn.config, &req).await?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, req.format.mime().to_string()),
+            (HeaderName::from_static("x-export-extension"), req.format.extension().to_string()),
+            (HeaderName::from_static("x-export-rows"), out.rows.to_string()),
+        ],
+        out.content,
+    )
+        .into_response())
 }
 
 async fn handle_shutdown() -> impl IntoResponse {

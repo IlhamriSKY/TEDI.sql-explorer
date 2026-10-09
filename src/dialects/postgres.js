@@ -1,4 +1,4 @@
-// SQL Explorer — PostgreSQL dialect descriptor. Bundled by build.mjs.
+// SQL Explorer: PostgreSQL dialect descriptor. Bundled by build.mjs.
 // See ./mysql.js for the field-by-field contract.
 
 /** @type {import("./types.js").Dialect} */

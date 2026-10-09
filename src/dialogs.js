@@ -1,4 +1,4 @@
-// SQL Explorer — dialogs module. Bundled into extension.js by build.mjs.
+// SQL Explorer: dialogs module. Bundled into extension.js by build.mjs.
 import { appendIcon, closeAllSelectMenus, el } from "./dom.js";
 import { ctx, state } from "./runtime.js";
 
@@ -32,7 +32,7 @@ export function closeOpenDialogs() {
  */
 export function openCenteredDialog({ title, width = 520, compact = false, onClose }) {
   // Mount on document.body (not panelRoot) so the modal centers on the whole
-  // window and is never clipped by a short split-pane — matches host modals.
+  // window and is never clipped by a short split-pane, matches host modals.
   const host = document.body;
   for (const prev of host.querySelectorAll(":scope > .tsql-overlay[data-form-modal]")) {
     prev.remove();
